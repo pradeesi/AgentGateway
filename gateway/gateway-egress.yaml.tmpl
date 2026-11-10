@@ -1,0 +1,23 @@
+# ==============================================================================
+# Purpose: Declarative definition for the Google-managed `AGENT_TO_ANYWHERE`
+#          Egress Agent Gateway governing all outbound traffic from Cymbal Bank
+#          Agent Runtime agents.
+# Architecture/Context: Binds the regional `AgentRegistry` (default-deny perimeter)
+#          and `AgentConnectivityTemplate` (private PSC access to the Semantic
+#          Governance Policy Engine).
+# Dependencies/Side Effects: Requires `networkservices.googleapis.com` and
+#          `agentregistry.googleapis.com`.
+# Author: Pradeep Singh
+# License: Apache-2.0
+# ==============================================================================
+name: ${EGRESS_GATEWAY}
+description: Cymbal Bank Agent-to-Anywhere egress gateway enforcing SPIFFE UAP, Model Armor SDP, and Semantic Governance.
+protocols:
+  - MCP
+googleManaged:
+  governedAccessPath: AGENT_TO_ANYWHERE
+agentConnectivityTemplate: projects/${PROJECT_NUMBER}/locations/${REGION}/agentConnectivityTemplates/${CONNECTIVITY_TEMPLATE}
+registries:
+  - //agentregistry.googleapis.com/projects/${PROJECT_ID}/locations/${REGION}
+labels:
+  managed-by: cymbal-agw-demo

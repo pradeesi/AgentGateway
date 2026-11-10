@@ -1,0 +1,33 @@
+# ==============================================================================
+# Purpose: Self-contained Python dependency manifest for deploying the Cymbal
+#          Bank Tier-1 Support ADK Agent to Vertex AI Agent Runtime.
+# Architecture/Context: Packaged independently when `agents-cli deploy` or
+#          `scripts/deploy_reasoning_engine.py` deploys `tier1-support-agent`
+#          with `identity_type=AGENT_IDENTITY` and dual Agent Gateway bindings.
+# Dependencies/Side Effects: Pins `google-auth>=2.40.0,<=2.60.0` to maintain
+#          SPIFFE certificate-bound + DPoP compatibility behind TLS inspection.
+# Author: Pradeep Singh
+# License: Apache-2.0
+# ==============================================================================
+
+[project]
+name = "tier1-support-agent"
+version = "1.0.0"
+description = "Cymbal Bank Tier-1 Support ADK Agent (Read-Only SPIFFE Identity Tier)"
+requires-python = ">=3.11"
+dependencies = [
+    "google-adk>=1.0.0",
+    "google-genai>=1.5.0",
+    "google-auth>=2.40.0,<=2.60.0",
+    "fastapi>=0.115.0,<1.0.0",
+    "uvicorn[standard]>=0.32.0,<1.0.0",
+    "httpx>=0.27.2,<1.0.0",
+    "pydantic>=2.9.0,<3.0.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]

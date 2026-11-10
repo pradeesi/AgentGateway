@@ -1,0 +1,17 @@
+# ==============================================================================
+# Purpose: Model Armor `CONTENT_AUTHZ` service extension inspecting prompts and
+#          MCP tool responses for prompt injection, malicious URIs, and PII.
+# Architecture/Context: Points to the regional Model Armor endpoint
+#          `modelarmor.${REGION}.rep.googleapis.com` with `failOpen: false`.
+# Dependencies/Side Effects: Requires `service-${PROJECT_NUMBER}@gcp-sa-dep` to
+#          hold `roles/modelarmor.calloutUser`, `roles/serviceusage.serviceUsageConsumer`,
+#          and `roles/modelarmor.user`.
+# Author: Pradeep Singh
+# License: Apache-2.0
+# ==============================================================================
+name: ${MA_AUTHZ_EXTENSION}
+service: modelarmor.${REGION}.rep.googleapis.com
+metadata:
+  model_armor_settings: '[{"request_template_id":"projects/${PROJECT_ID}/locations/${REGION}/templates/${MODEL_ARMOR_TEMPLATE_ID}","response_template_id":"projects/${PROJECT_ID}/locations/${REGION}/templates/${MODEL_ARMOR_TEMPLATE_ID}"}]'
+failOpen: false
+timeout: 5s

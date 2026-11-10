@@ -1,0 +1,20 @@
+# ==============================================================================
+# Purpose: Manifest metadata enabling `agents-cli` operations (`run`, `eval`,
+#          `deploy`) inside `agents/risk_specialist_agent`.
+# Architecture/Context: Declares `agent_runtime` deployment target and `app`
+#          package root for the Risk & Disputes Specialist ADK agent.
+# Dependencies/Side Effects: Read by `google-agents-cli` >= 1.6.
+# Author: Pradeep Singh
+# License: Apache-2.0
+# ==============================================================================
+
+name: risk-specialist-agent
+agent_directory: app
+region: us-central1
+base_template: adk
+language: python
+framework: google-adk
+acli_version: "1.8.0"
+create_params:
+  deployment_target: agent_runtime
+  agent_gateway: true

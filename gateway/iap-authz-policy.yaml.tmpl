@@ -1,0 +1,19 @@
+# ==============================================================================
+# Purpose: `REQUEST_AUTHZ` authorization policy binding the IAP service extension
+#          to the Cymbal Bank `AGENT_TO_ANYWHERE` Egress Agent Gateway.
+# Architecture/Context: Evaluated first on every outbound request before any
+#          `CONTENT_AUTHZ` extension processes payload bodies.
+# Dependencies/Side Effects: Imported via `gcloud network-security authz-policies import`.
+# Author: Pradeep Singh
+# License: Apache-2.0
+# ==============================================================================
+name: ${IAP_AUTHZ_POLICY}
+target:
+  resources:
+    - "projects/${PROJECT_ID}/locations/${REGION}/agentGateways/${EGRESS_GATEWAY}"
+policyProfile: REQUEST_AUTHZ
+action: CUSTOM
+customProvider:
+  authzExtension:
+    resources:
+      - "projects/${PROJECT_ID}/locations/${REGION}/authzExtensions/${IAP_AUTHZ_EXTENSION}"

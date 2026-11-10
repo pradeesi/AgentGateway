@@ -1,0 +1,86 @@
+# ==============================================================================
+# Purpose: Hardened GKE Deployment and ClusterIP Service for `cymbal-banking-mcp`.
+# Architecture/Context: Runs unprivileged (`10001`), mounts `/tmp` emptyDir for
+#          read-only root filesystem compliance, and connects to Firestore via
+#          GKE Workload Identity Federation.
+# Dependencies/Side Effects: Expects image in Artifact Registry `${REGION}-docker.pkg.dev/...`.
+# Author: Pradeep Singh
+# License: Apache-2.0
+# ==============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cymbal-banking-mcp
+  namespace: cymbal-agw
+  labels:
+    app: cymbal-banking-mcp
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: cymbal-banking-mcp
+  template:
+    metadata:
+      labels:
+        app: cymbal-banking-mcp
+    spec:
+      serviceAccountName: cymbal-mcp-ksa
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: mcp-server
+          image: ${REGION}-docker.pkg.dev/${PROJECT_ID}/${PREFIX}-containers/cymbal-banking-mcp:latest
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: PROJECT_ID
+              value: "${PROJECT_ID}"
+            - name: STORAGE_BACKEND
+              value: "firestore"
+            - name: FIRESTORE_DATABASE
+              value: "(default)"
+            - name: FIRESTORE_COLLECTION_PREFIX
+              value: "cymbal_agw"
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "512Mi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 20
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cymbal-banking-mcp
+  namespace: cymbal-agw
+spec:
+  type: ClusterIP
+  selector:
+    app: cymbal-banking-mcp
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080

@@ -1,0 +1,64 @@
+# ==============================================================================
+# Purpose: Git ignore rules enforcing secret exclusion, build artifact hygiene,
+#          and OS/IDE noise filtering for the Agent Gateway Demo repository.
+# Architecture/Context: Root VCS security boundary preventing credentials,
+#          runtime state checkpoints, and virtual environments from entering Git.
+# Dependencies/Side Effects: Applies recursively across all subdirectories.
+# Author: Pradeep Singh
+# License: Apache-2.0
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# Secrets, Credentials & Environment Files (NEVER COMMIT)
+# ------------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*credentials*.json
+*service-account*.json
+*service_account*.json
+application_default_credentials.json
+
+# ------------------------------------------------------------------------------
+# Provisioning State, Deployment Metadata & Runtime Local Ledgers
+# ------------------------------------------------------------------------------
+.state/
+.local_data/
+**/deployment_metadata.json*
+*.tfstate
+*.tfstate.*
+.terraform/
+
+# ------------------------------------------------------------------------------
+# Python Virtual Environments, Caches & Build Artifacts
+# ------------------------------------------------------------------------------
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# ------------------------------------------------------------------------------
+# Operating System & Editor / IDE Noise
+# ------------------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+*~

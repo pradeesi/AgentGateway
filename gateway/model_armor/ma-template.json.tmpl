@@ -1,0 +1,26 @@
+{
+  "_comment": "Purpose: Model Armor template bound to both Ingress (CLIENT_TO_AGENT) and Egress (AGENT_TO_ANYWHERE) Agent Gateways. Architecture/Context: Combines Prompt Injection & Jailbreak detection, Malicious URI blocking, and Advanced Cloud SDP PII de-identification; auto-merged with any org floorSetting by scripts/lib/model_armor.sh. Dependencies/Side Effects: Requires Model Armor service agent to hold roles/dlp.user and roles/dlp.reader. Author: Pradeep Singh | License: Apache-2.0",
+  "filterConfig": {
+    "piAndJailbreakFilterSettings": {
+      "filterEnforcement": "ENABLED",
+      "confidenceLevel": "${MODEL_ARMOR_PI_CONFIDENCE}"
+    },
+    "maliciousUriFilterSettings": {
+      "filterEnforcement": "ENABLED"
+    },
+    "sdpSettings": {
+      "advancedConfig": {
+        "inspectTemplate": "projects/${PROJECT_ID}/locations/${REGION}/inspectTemplates/${SDP_INSPECT_TEMPLATE_ID}",
+        "deidentifyTemplate": "projects/${PROJECT_ID}/locations/${REGION}/deidentifyTemplates/${SDP_DEIDENTIFY_TEMPLATE_ID}"
+      }
+    }
+  },
+  "templateMetadata": {
+    "enforcementType": "INSPECT_AND_BLOCK",
+    "logTemplateOperations": true,
+    "logSanitizeOperations": true
+  },
+  "labels": {
+    "managed-by": "cymbal-agw-demo"
+  }
+}

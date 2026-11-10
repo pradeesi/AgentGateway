@@ -1,0 +1,12 @@
+# ==============================================================================
+# Purpose: ADK behavioral evaluation criteria configuration for the Risk &
+#          Disputes Specialist Agent (`agents-cli eval run`).
+# Architecture/Context: Validates tool trajectory accuracy and response fidelity.
+# Dependencies/Side Effects: Read by `google-agents-cli` during Phase 4 eval.
+# Author: Pradeep Singh
+# License: Apache-2.0
+# ==============================================================================
+
+criteria:
+  tool_trajectory_avg_score: 0.8
+  response_match_score: 0.7

@@ -1,0 +1,16 @@
+# ==============================================================================
+# Purpose: Identity-Aware Proxy (IAP) `REQUEST_AUTHZ` service extension for the
+#          Cymbal Bank Egress Agent Gateway.
+# Architecture/Context: Evaluates IAM Unified Access Policies (`iapPolicyVersion: "V2"`)
+#          by default, or automatically falls back to `iapPolicyVersion: "V1"`
+#          when an enterprise organization enforces `disableAccessPolicyBindings`.
+# Dependencies/Side Effects: Imported via `gcloud beta service-extensions authz-extensions import`.
+# Author: Pradeep Singh
+# License: Apache-2.0
+# ==============================================================================
+name: ${IAP_AUTHZ_EXTENSION}
+service: iap.googleapis.com
+failOpen: false
+timeout: 1s
+metadata:
+  iapPolicyVersion: "${IAP_POLICY_VERSION}"

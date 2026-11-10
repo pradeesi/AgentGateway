@@ -1,0 +1,23 @@
+# ==============================================================================
+# Purpose: Agent Gateway Connectivity Template (`AgentConnectivityTemplate`)
+#          attaching `AGENT_TO_ANYWHERE` egress traffic to the Cymbal Bank VPC
+#          via Private Service Connect (`PRIVATE_RANGES_ONLY`) and Cloud DNS
+#          peering so the gateway resolves the private Semantic Governance
+#          Policy Engine endpoint while keeping public HTTPS access to Google
+#          APIs and Cloud Run MCP services.
+# Architecture/Context: Rendered with `envsubst` and imported via
+#          `gcloud network-services agent-connectivity-templates import`.
+# Dependencies/Side Effects: Requires `networkservices`, `compute`, and `dns` APIs.
+# Author: Pradeep Singh
+# License: Apache-2.0
+# ==============================================================================
+name: projects/${PROJECT_NUMBER}/locations/${REGION}/agentConnectivityTemplates/${CONNECTIVITY_TEMPLATE}
+accessPath: AGENT_TO_ANYWHERE
+deploymentModel: CENTRALIZED
+egressNetworkConfig:
+  networkAttachment: projects/${PROJECT_NUMBER}/regions/${REGION}/networkAttachments/${NETWORK_ATTACHMENT}
+  dnsPeeringConfig:
+    domains:
+      - ${SGP_DNS_ZONE_SUFFIX}
+    targetNetwork: projects/${PROJECT_ID}/global/networks/${VPC_NETWORK}
+  vpcEgress: PRIVATE_RANGES_ONLY

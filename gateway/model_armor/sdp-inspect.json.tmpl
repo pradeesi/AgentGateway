@@ -1,0 +1,19 @@
+{
+  "_comment": "Purpose: Sensitive Data Protection (Cloud DLP) InspectTemplate identifying banking PII infoTypes in MCP tool responses. Architecture/Context: Referenced by gateway/model_armor/ma-template.json.tmpl; stripped of _comment and upserted via dlp.googleapis.com/v2. Dependencies/Side Effects: Requires dlp.googleapis.com enabled. Author: Pradeep Singh | License: Apache-2.0",
+  "templateId": "${SDP_INSPECT_TEMPLATE_ID}",
+  "inspectTemplate": {
+    "displayName": "Cymbal Bank Agent Gateway PII Inspect Template",
+    "description": "Detects SSN, payment card PAN, ABA routing numbers, email addresses, and phone numbers in MCP payloads.",
+    "inspectConfig": {
+      "infoTypes": [
+        { "name": "US_SOCIAL_SECURITY_NUMBER" },
+        { "name": "CREDIT_CARD_NUMBER" },
+        { "name": "US_BANK_ROUTING_MICR" },
+        { "name": "EMAIL_ADDRESS" },
+        { "name": "PHONE_NUMBER" }
+      ],
+      "minLikelihood": "${SDP_MIN_LIKELIHOOD}",
+      "includeQuote": false
+    }
+  }
+}

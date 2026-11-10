@@ -1,0 +1,32 @@
+# ==============================================================================
+# Purpose: Kubernetes Namespace and Workload Identity ServiceAccounts for
+#          running Cymbal Bank MCP & Portal workloads on Google Kubernetes
+#          Engine (GKE Autopilot / Standard).
+# Architecture/Context: Replace `${PROJECT_ID}` via `envsubst` prior to
+#          `kubectl apply -f`.
+# Dependencies/Side Effects: Creates namespace `cymbal-agw` and K8s SAs.
+# Author: Pradeep Singh
+# License: Apache-2.0
+# ==============================================================================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cymbal-agw
+  labels:
+    app.kubernetes.io/part-of: cymbal-agent-gateway-demo
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cymbal-mcp-ksa
+  namespace: cymbal-agw
+  annotations:
+    iam.gke.io/gcp-service-account: cymbal-mcp-sa@${PROJECT_ID}.iam.gserviceaccount.com
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cymbal-portal-ksa
+  namespace: cymbal-agw
+  annotations:
+    iam.gke.io/gcp-service-account: cymbal-portal-sa@${PROJECT_ID}.iam.gserviceaccount.com

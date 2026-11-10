@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<!--
+  Purpose: Clean institutional banking web console for Cymbal Bank Disputes &
+           Treasury Operations, featuring Customer 360 accounts, open disputes,
+           transaction ledger, Agent Role switcher (Tier-1 vs. Risk Specialist),
+           and live Google Cloud Agent Gateway governance audit telemetry.
+  Architecture/Context: Served by `services/cymbal_portal/main.py`. Intentionally
+           contains zero embedded exploit scripts, attack buttons, or cheat-sheet
+           modals—all test and attack prompts live in `README.md`.
+  Dependencies/Side Effects: Loads `/static/styles.css` and `/static/portal.js`.
+  Author: Pradeep Singh
+  License: Apache-2.0
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cymbal Bank — Disputes &amp; Treasury Operations</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">CB</div>
+      <div>
+        <h1>Cymbal Bank</h1>
+        <p class="subtitle">Disputes, Risk &amp; Treasury Operations Console</p>
+      </div>
+    </div>
+    <div class="topbar-meta">
+      <span class="meta-pill" id="env-pill">Loading environment...</span>
+      <span class="meta-pill meta-pill-accent" id="gateway-pill">Agent Gateway Governed</span>
+      <button type="button" class="btn btn-outline" id="refresh-all-btn">Refresh Ledger</button>
+      <button type="button" class="btn btn-secondary" id="reset-ledger-btn">Reset Demo Ledger</button>
+    </div>
+  </header>
+
+  <main class="workspace-grid">
+    <section class="ledger-column" aria-label="Banking Operations Workspace">
+      <div class="kpi-strip" id="kpi-strip">
+        <article class="kpi-card">
+          <span class="kpi-label">Managed Deposits</span>
+          <strong class="kpi-value" id="kpi-deposits">$0.00</strong>
+        </article>
+        <article class="kpi-card">
+          <span class="kpi-label">Open Disputes</span>
+          <strong class="kpi-value" id="kpi-open-disputes">0</strong>
+        </article>
+        <article class="kpi-card">
+          <span class="kpi-label">Disputed Exposure</span>
+          <strong class="kpi-value" id="kpi-exposure">$0.00</strong>
+        </article>
+        <article class="kpi-card">
+          <span class="kpi-label">Accounts on Hold</span>
+          <strong class="kpi-value" id="kpi-holds">0</strong>
+        </article>
+      </div>
+
+      <section class="panel">
+        <div class="panel-header">
+          <h2>Open &amp; Resolved Dispute Cases</h2>
+          <span class="panel-caption">Real-time state from <code id="storage-badge">ledger</code></span>
+        </div>
+        <div class="table-wrap">
+          <table class="data-table" id="disputes-table">
+            <thead>
+              <tr>
+                <th>Case ID</th>
+                <th>Customer</th>
+                <th>Txn ID</th>
+                <th>Amount</th>
+                <th>Reason Code</th>
+                <th>Fraud Ticket</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="disputes-tbody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <div class="two-col-panels">
+        <section class="panel">
+          <div class="panel-header">
+            <h2>Customer Accounts</h2>
+            <span class="panel-caption">KYC &amp; Hold Status</span>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Account Holder</th>
+                  <th>Tier</th>
+                  <th>Available Balance</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="accounts-tbody"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-header">
+            <h2>Recent Ledger Transactions</h2>
+            <span class="panel-caption">Card, ACH &amp; Wire Activity</span>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Txn ID</th>
+                  <th>Customer</th>
+                  <th>Counterparty</th>
+                  <th>Channel</th>
+                  <th>Amount</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="txns-tbody"></tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+
+      <section class="panel">
+        <div class="panel-header">
+          <h2>Agent Gateway &amp; Ledger Audit Stream</h2>
+          <div class="panel-actions">
+            <span class="panel-caption">Cloud Logging (Gateway, IAP/UAP, Model Armor, Semantic Policy) + Ledger</span>
+            <button type="button" class="btn btn-sm" id="refresh-audit-btn">Refresh Telemetry</button>
+          </div>
+        </div>
+        <div class="table-wrap audit-table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Timestamp (UTC)</th>
+                <th>Governance Layer</th>
+                <th>Verdict</th>
+                <th>Principal</th>
+                <th>Target</th>
+                <th>Summary / Rationale</th>
+              </tr>
+            </thead>
+            <tbody id="audit-tbody"></tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+
+    <aside class="assistant-column" aria-label="AI Disputes Assistant">
+      <div class="assistant-header">
+        <div>
+          <h2>Operations AI Assistant</h2>
+          <p class="panel-caption">Governed by Google Cloud Agent Gateway</p>
+        </div>
+        <button type="button" class="btn btn-sm" id="clear-chat-btn">New Session</button>
+      </div>
+
+      <div class="role-selector-box">
+        <label for="agent-role-select" class="field-label">Active Agent Workload Identity</label>
+        <select id="agent-role-select" class="role-select">
+          <option value="tier1">Tier-1 Support Agent (Read-Only Tier)</option>
+          <option value="specialist">Risk &amp; Disputes Specialist Agent (Privileged Tier)</option>
+        </select>
+        <div class="spiffe-box">
+          <span class="tier-chip" id="active-tier-chip">Read-Only MCP Tier</span>
+          <code class="spiffe-uri" id="active-spiffe-id">spiffe://...</code>
+        </div>
+      </div>
+
+      <div class="chat-transcript" id="chat-transcript" role="log" aria-live="polite">
+        <div class="chat-msg chat-msg-system">
+          Select either the <strong>Tier-1 Support Agent</strong> or the
+          <strong>Risk &amp; Disputes Specialist Agent</strong> above to investigate customer
+          accounts and disputes through Google Cloud Agent Gateway.
+        </div>
+      </div>
+
+      <form class="chat-composer" id="chat-form">
+        <textarea
+          id="chat-input"
+          rows="3"
+          placeholder="Enter an operational inquiry or dispute instruction..."
+          required
+        ></textarea>
+        <div class="composer-footer">
+          <span class="composer-hint" id="chat-status-text">Ready</span>
+          <button type="submit" class="btn btn-primary" id="send-btn">Send Request</button>
+        </div>
+      </form>
+    </aside>
+  </main>
+
+  <script src="/static/portal.js"></script>
+</body>
+</html>

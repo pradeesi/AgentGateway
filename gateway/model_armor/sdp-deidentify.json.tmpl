@@ -1,0 +1,26 @@
+{
+  "_comment": "Purpose: Sensitive Data Protection (Cloud DLP) DeidentifyTemplate replacing detected banking PII with bracketed [INFOTYPE] tokens (e.g., [US_SOCIAL_SECURITY_NUMBER], [CREDIT_CARD_NUMBER]). Architecture/Context: Referenced by gateway/model_armor/ma-template.json.tmpl; upserted via dlp.googleapis.com/v2. Dependencies/Side Effects: Preserves surrounding JSON structure while masking sensitive values. Author: Pradeep Singh | License: Apache-2.0",
+  "templateId": "${SDP_DEIDENTIFY_TEMPLATE_ID}",
+  "deidentifyTemplate": {
+    "displayName": "Cymbal Bank Agent Gateway PII De-Identify Template",
+    "description": "Masks banking PII infoTypes with deterministic [INFOTYPE] placeholders.",
+    "deidentifyConfig": {
+      "infoTypeTransformations": {
+        "transformations": [
+          {
+            "infoTypes": [
+              { "name": "US_SOCIAL_SECURITY_NUMBER" },
+              { "name": "CREDIT_CARD_NUMBER" },
+              { "name": "US_BANK_ROUTING_MICR" },
+              { "name": "EMAIL_ADDRESS" },
+              { "name": "PHONE_NUMBER" }
+            ],
+            "primitiveTransformation": {
+              "replaceWithInfoTypeConfig": {}
+            }
+          }
+        ]
+      }
+    }
+  }
+}

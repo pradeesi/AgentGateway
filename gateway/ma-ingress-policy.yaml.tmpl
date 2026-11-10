@@ -1,0 +1,20 @@
+# ==============================================================================
+# Purpose: `CONTENT_AUTHZ` authorization policy binding Model Armor to the
+#          `CLIENT_TO_AGENT` Ingress Agent Gateway to block direct operator
+#          prompt injections and jailbreaks before reaching Agent Runtime.
+# Architecture/Context: Client-to-Agent gateways support a single `CONTENT_AUTHZ`
+#          policy, dedicated here to Model Armor inbound screening.
+# Dependencies/Side Effects: Imported via `gcloud network-security authz-policies import`.
+# Author: Pradeep Singh
+# License: Apache-2.0
+# ==============================================================================
+name: ${MA_INGRESS_POLICY}
+target:
+  resources:
+    - "projects/${PROJECT_ID}/locations/${REGION}/agentGateways/${INGRESS_GATEWAY}"
+policyProfile: CONTENT_AUTHZ
+action: CUSTOM
+customProvider:
+  authzExtension:
+    resources:
+      - "projects/${PROJECT_ID}/locations/${REGION}/authzExtensions/${MA_AUTHZ_EXTENSION}"

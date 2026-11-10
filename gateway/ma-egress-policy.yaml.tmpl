@@ -1,0 +1,26 @@
+# ==============================================================================
+# Purpose: `CONTENT_AUTHZ` authorization policy binding Model Armor + Cloud SDP
+#          to the `AGENT_TO_ANYWHERE` Egress Agent Gateway so MCP JSON-RPC
+#          responses have PII redacted and indirect prompt injections blocked.
+# Architecture/Context: Evaluates `application/json` and `text/*` payloads while
+#          excluding internal `application/grpc` platform calls.
+# Dependencies/Side Effects: Imported via `gcloud network-security authz-policies import`.
+# Author: Pradeep Singh
+# License: Apache-2.0
+# ==============================================================================
+name: ${MA_EGRESS_POLICY}
+target:
+  resources:
+    - "projects/${PROJECT_ID}/locations/${REGION}/agentGateways/${EGRESS_GATEWAY}"
+policyProfile: CONTENT_AUTHZ
+action: CUSTOM
+customProvider:
+  authzExtension:
+    resources:
+      - "projects/${PROJECT_ID}/locations/${REGION}/authzExtensions/${MA_AUTHZ_EXTENSION}"
+httpRules:
+  - to:
+      operations:
+        - paths:
+            - prefix: "/mcp"
+    when: "request.headers['content-type'].startsWith('application/json') || request.headers['content-type'].startsWith('text/')"

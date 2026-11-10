@@ -1,0 +1,27 @@
+# ==============================================================================
+# Purpose: `CONTENT_AUTHZ` authorization policy attaching the Semantic
+#          Governance Policy Engine extension to `AGENT_TO_ANYWHERE` Agent Gateway.
+# Architecture/Context: Excludes `application/grpc` traffic (so Cloud Resource
+#          Manager / gRPC control calls never stall) and intercepts synchronous
+#          `:generateContent` model-inference calls to validate tool proposals
+#          against plain-English banking compliance policies.
+# Dependencies/Side Effects: Imported via `gcloud network-security authz-policies import`.
+# Author: Pradeep Singh
+# License: Apache-2.0
+# ==============================================================================
+name: ${SGP_AUTHZ_POLICY}
+target:
+  resources:
+    - projects/${PROJECT_ID}/locations/${REGION}/agentGateways/${EGRESS_GATEWAY}
+httpRules:
+  - to:
+      operations:
+        - paths:
+            - contains: ":generateContent"
+    when: "!request.headers['content-type'].startsWith('application/grpc')"
+action: CUSTOM
+policyProfile: CONTENT_AUTHZ
+customProvider:
+  authzExtension:
+    resources:
+      - projects/${PROJECT_ID}/locations/${REGION}/authzExtensions/${SGP_AUTHZ_EXTENSION}

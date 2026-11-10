@@ -1,0 +1,18 @@
+# ==============================================================================
+# Purpose: Declarative definition for the Google-managed `CLIENT_TO_AGENT`
+#          Ingress Agent Gateway protecting both Cymbal Bank Reasoning Engines.
+# Architecture/Context: Imported via `gcloud network-services agent-gateways import`
+#          and paired with a `CONTENT_AUTHZ` Model Armor policy to block direct
+#          prompt injections and jailbreaks before reaching Agent Runtime.
+# Dependencies/Side Effects: Requires `networkservices.googleapis.com`.
+# Author: Pradeep Singh
+# License: Apache-2.0
+# ==============================================================================
+name: ${INGRESS_GATEWAY}
+description: Cymbal Bank Client-to-Agent ingress gateway enforcing Model Armor prompt safety.
+protocols:
+  - MCP
+googleManaged:
+  governedAccessPath: CLIENT_TO_AGENT
+labels:
+  managed-by: cymbal-agw-demo

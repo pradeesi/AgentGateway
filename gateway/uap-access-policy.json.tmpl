@@ -1,0 +1,93 @@
+{
+  "_comment": "Purpose: IAM v3 Unified Access Policy (UAP) enforcing per-SPIFFE-identity MCP tool least privilege on Google Cloud Agent Gateway. Architecture/Context: Rendered with envsubst, stripped of _comment, and POSTed to iam.googleapis.com/v3beta/.../accessPolicies. Dependencies/Side Effects: Grants essential Google APIs to the project principalSet, restricts Tier-1 Support Agent strictly to read_only_hint == true tools on cymbal-banking-mcp (with explicit DENY override on non-read-only tools), and grants Risk Specialist Agent full MCP tool access. Author: Pradeep Singh | License: Apache-2.0",
+  "displayName": "Cymbal Bank Agent Gateway Least-Privilege UAP",
+  "details": {
+    "rules": [
+      {
+        "description": "Allow all Cymbal Bank Agent Runtime workloads in project to reach registered Google Cloud platform APIs",
+        "effect": "ALLOW",
+        "principals": [
+          "${AGENT_PRINCIPAL_SET}"
+        ],
+        "operation": {
+          "permissions": [
+            "iap.googleapis.com/resources.egressViaIAP"
+          ]
+        },
+        "conditions": {
+          "iap.googleapis.com": {
+            "expression": "destination.agent_registry.endpoint.name == '${REGISTRY_GOOGLE_APIS_NAME}'"
+          }
+        }
+      },
+      {
+        "description": "Allow Tier-1 Support Agent SPIFFE identity strictly read-only MCP mount on Cymbal Banking MCP Server",
+        "effect": "ALLOW",
+        "principals": [
+          "${TIER1_PRINCIPAL}"
+        ],
+        "operation": {
+          "permissions": [
+            "iap.googleapis.com/resources.egressViaIAP"
+          ]
+        },
+        "conditions": {
+          "iap.googleapis.com": {
+            "expression": "destination.agent_registry.mcp_server.name == '${REGISTRY_MCP_RO_NAME}'"
+          }
+        }
+      },
+      {
+        "description": "Allow Tier-1 Support Agent SPIFFE identity read-only MCP tools by readOnlyHint annotation",
+        "effect": "ALLOW",
+        "principals": [
+          "${TIER1_PRINCIPAL}"
+        ],
+        "operation": {
+          "permissions": [
+            "iap.googleapis.com/resources.egressViaIAP"
+          ]
+        },
+        "conditions": {
+          "iap.googleapis.com": {
+            "expression": "destination.agent_registry.mcp_server.name == '${REGISTRY_MCP_UNIFIED_NAME}' && destination.agent_registry.mcp_server.tool.annotations.read_only_hint == true"
+          }
+        }
+      },
+      {
+        "description": "Explicitly deny Tier-1 Support Agent SPIFFE identity from invoking the privileged mutation MCP mount",
+        "effect": "DENY",
+        "principals": [
+          "${TIER1_PRINCIPAL}"
+        ],
+        "operation": {
+          "permissions": [
+            "iap.googleapis.com/resources.egressViaIAP"
+          ]
+        },
+        "conditions": {
+          "iap.googleapis.com": {
+            "expression": "destination.agent_registry.mcp_server.name == '${REGISTRY_MCP_PRIV_NAME}'"
+          }
+        }
+      },
+      {
+        "description": "Allow Risk & Disputes Specialist Agent SPIFFE identity to invoke all registered mounts and tools on Cymbal Banking MCP Server",
+        "effect": "ALLOW",
+        "principals": [
+          "${SPECIALIST_PRINCIPAL}"
+        ],
+        "operation": {
+          "permissions": [
+            "iap.googleapis.com/resources.egressViaIAP"
+          ]
+        },
+        "conditions": {
+          "iap.googleapis.com": {
+            "expression": "destination.agent_registry.mcp_server.name in ['${REGISTRY_MCP_UNIFIED_NAME}', '${REGISTRY_MCP_RO_NAME}', '${REGISTRY_MCP_PRIV_NAME}']"
+          }
+        }
+      }
+    ]
+  }
+}

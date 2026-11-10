@@ -1,0 +1,90 @@
+# ==============================================================================
+# Purpose: Hardened GKE Deployment and ClusterIP Service for the Cymbal Bank
+#          Operations Portal (`cymbal-portal`).
+# Architecture/Context: Connects to Firestore for live ledger state and routes
+#          chat queries to Vertex AI Agent Runtime via `CLIENT_TO_AGENT` Gateway.
+# Dependencies/Side Effects: Exposed externally via `k8s/gateway-httproute.yaml`.
+# Author: Pradeep Singh
+# License: Apache-2.0
+# ==============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cymbal-portal
+  namespace: cymbal-agw
+  labels:
+    app: cymbal-portal
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: cymbal-portal
+  template:
+    metadata:
+      labels:
+        app: cymbal-portal
+    spec:
+      serviceAccountName: cymbal-portal-ksa
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: portal
+          image: ${REGION}-docker.pkg.dev/${PROJECT_ID}/${PREFIX}-containers/cymbal-portal:latest
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: PROJECT_ID
+              value: "${PROJECT_ID}"
+            - name: REGION
+              value: "${REGION}"
+            - name: STORAGE_BACKEND
+              value: "firestore"
+            - name: AGENT_INVOCATION_MODE
+              value: "agent_runtime"
+            - name: TIER1_REASONING_ENGINE
+              value: "${TIER1_ENGINE_RESOURCE}"
+            - name: SPECIALIST_REASONING_ENGINE
+              value: "${SPECIALIST_ENGINE_RESOURCE}"
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 20
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cymbal-portal
+  namespace: cymbal-agw
+spec:
+  type: ClusterIP
+  selector:
+    app: cymbal-portal
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080

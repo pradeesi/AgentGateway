@@ -1,0 +1,14 @@
+# ==============================================================================
+# Purpose: Semantic Governance Policy Engine `CONTENT_AUTHZ` service extension
+#          forwarding model-inference tool-call decisions over PSC/DNS peering.
+# Architecture/Context: Targets `${SGP_DNS_HOSTNAME}` resolved via the private
+#          Cloud DNS zone peered on `AgentConnectivityTemplate`.
+# Dependencies/Side Effects: Imported via `gcloud service-extensions authz-extensions import`.
+# Author: Pradeep Singh
+# License: Apache-2.0
+# ==============================================================================
+name: ${SGP_AUTHZ_EXTENSION}
+service: ${SGP_DNS_HOSTNAME}
+authority: ${SGP_DNS_HOSTNAME}
+failOpen: false
+timeout: 10s
