@@ -23,76 +23,76 @@ The system implements a **Zero-Trust, Defense-in-Depth Agentic Architecture** na
 
 ```mermaid
 flowchart TB
-    subgraph ClientZone["Operator Workstation or Cloud Shell"]
-        Op["Banking Disputes Operator (Browser)"]
-        Proxy["Authenticated Cloud Run Proxy (proxy_portal.sh OIDC ID_TOKEN)"]
+    subgraph ClientZone["Operator Workstation / Cloud Shell"]
+        Op["Banking Operator Browser"]
+        Proxy["OIDC Proxy (proxy_portal.sh)"]
     end
 
-    subgraph Presentation["Presentation and Audit Plane (Cloud Run)"]
-        Portal["Cymbal Bank Operations Portal (FastAPI + Live Audit Drawer)"]
+    subgraph Presentation["Presentation Plane (Cloud Run)"]
+        Portal["cymbal-portal (FastAPI UI)"]
     end
 
-    subgraph IngressPlane["Inbound Agent Gateway (CLIENT_TO_AGENT)"]
-        IngGW["cbgw-ingress-gw (Managed Ingress Gateway)"]
-        IngMA["Model Armor CONTENT_AUTHZ (Direct Prompt Injection and Malicious URI Block)"]
+    subgraph IngressPlane["Inbound Gateway (CLIENT_TO_AGENT)"]
+        IngGW["cbgw-ingress-gw"]
+        IngMA["Model Armor Ingress Filter"]
     end
 
-    subgraph RuntimePlane["Vertex AI Agent Runtime (Cryptographic SPIFFE Workloads)"]
-        T1["Tier-1 Support Agent (SPIFFE Identity #1 - Read-Only Tier)"]
-        Spec["Risk and Disputes Specialist Agent (SPIFFE Identity #2 - Privileged Tier)"]
+    subgraph RuntimePlane["Vertex AI Agent Runtime (SPIFFE Identity)"]
+        T1["Tier-1 Support Agent (Read-Only)"]
+        Spec["Risk Specialist Agent (Privileged)"]
     end
 
-    subgraph EgressPlane["Outbound Agent Gateway (AGENT_TO_ANYWHERE)"]
-        EgGW["cbgw-egress-gw (Managed Egress Gateway + TLS Inspection CA)"]
-        Reg["Pillar 1: Agent Registry (Default-Deny Perimeter)"]
-        UAP["Pillar 2: IAP REQUEST_AUTHZ + IAM Unified Access Policy V2"]
-        EgMA["Pillar 3: Model Armor + Cloud SDP (Indirect PI Block + 5-PII De-ID)"]
-        SGPExt["Pillar 4: Semantic Governance Extension (CONTENT_AUTHZ)"]
+    subgraph EgressPlane["Outbound Gateway (AGENT_TO_ANYWHERE)"]
+        EgGW["cbgw-egress-gw (TLS Inspection)"]
+        Reg["1. Agent Registry Default-Deny"]
+        UAP["2. IAP + IAM UAP V2"]
+        EgMA["3. Model Armor + Cloud SDP"]
+        SGPExt["4. Semantic Governance Ext"]
     end
 
-    subgraph PrivateVPC["Private Governance VPC (cbgw-vpc + Cloud DNS sgp.cymbal.internal.)"]
-        PSC["Private Service Connect Attachment (cbgw-psc-attachment)"]
-        SGPEng["Semantic Governance Policy Engine ($500 Cap + SUP-APR Override)"]
+    subgraph PrivateVPC["Private Governance VPC (cbgw-vpc)"]
+        PSC["PSC Attachment"]
+        SGPEng["Semantic Policy Engine ($500 Cap)"]
     end
 
-    subgraph ToolingDataPlane["Backend Services and Persistence"]
-        VertexLLM["Vertex AI Gemini 2.5 Flash (:generateContent)"]
-        MCPRo["cymbal-banking-mcp (/mcp/readonly - 4 Read Tools)"]
-        MCPPriv["cymbal-banking-mcp (/mcp/privileged - 3 Mutating Tools)"]
-        Rogue["cymbal-rogue-ext (/collect - Unregistered Cloud Run Service)"]
-        FS[("Cloud Firestore Native (Accounts, Transactions, Disputes)")]
-        Logs[("Cloud Logging Audit Streams (Gateway, Model Armor, Semantic Policy)")]
+    subgraph ToolingDataPlane["Backend Services & Persistence"]
+        VertexLLM["Vertex AI Gemini 2.5 Flash"]
+        MCPRo["MCP /readonly (4 Read Tools)"]
+        MCPPriv["MCP /privileged (3 Write Tools)"]
+        Rogue["cymbal-rogue-ext (Unregistered)"]
+        FS[("Cloud Firestore Ledger")]
+        Logs[("Cloud Logging Audit Feed")]
     end
 
-    Op -->|"http://127.0.0.1:8080"| Proxy
-    Proxy -->|"IAM Bearer OIDC"| Portal
-    Portal -->|":streamQuery + Passthrough"| IngGW
+    Op -->|"127.0.0.1:8080"| Proxy
+    Proxy -->|"Bearer OIDC"| Portal
+    Portal -->|":streamQuery"| IngGW
     IngGW --> IngMA
-    IngMA -->|"Clean Prompts Only"| T1
-    IngMA -->|"Clean Prompts Only"| Spec
+    IngMA -->|"Clean Prompts"| T1
+    IngMA -->|"Clean Prompts"| Spec
 
-    T1 -->|"mTLS SPIFFE #1"| EgGW
-    Spec -->|"mTLS SPIFFE #2"| EgGW
+    T1 -->|"SPIFFE ID 1"| EgGW
+    Spec -->|"SPIFFE ID 2"| EgGW
 
     EgGW --> Reg
-    Reg -->|"HTTP 403 Default-Deny"| Rogue
+    Reg -->|"403 Deny"| Rogue
     Reg --> UAP
     UAP --> EgMA
     EgMA --> SGPExt
-    SGPExt <-->|"Private VPC PSC"| PSC
+    SGPExt <-->|"Private PSC"| PSC
     PSC <--> SGPEng
 
-    SGPExt -->|"Approved :generateContent"| VertexLLM
-    UAP -->|"Tier-1 + Specialist ALLOW"| MCPRo
-    UAP -->|"Specialist ONLY (Tier-1 HTTP 403)"| MCPPriv
+    SGPExt -->|":generateContent"| VertexLLM
+    UAP -->|"Tier-1 + Spec ALLOW"| MCPRo
+    UAP -->|"Spec ONLY (Tier-1 403)"| MCPPriv
     MCPRo --> FS
     MCPPriv --> FS
 
-    IngMA -.->|"Audit Spans"| Logs
-    EgGW -.->|"Gateway & IAP Verdicts"| Logs
-    EgMA -.->|"SDP Masking & PI Blocks"| Logs
-    SGPEng -.->|"LLM Policy Rationales"| Logs
-    Logs -.->|"Real-Time Telemetry"| Portal
+    IngMA -.-> Logs
+    EgGW -.-> Logs
+    EgMA -.-> Logs
+    SGPEng -.-> Logs
+    Logs -.->|"Live Verdicts"| Portal
 ```
 
 ### End-to-End Request & Policy Evaluation Flow
@@ -106,36 +106,36 @@ sequenceDiagram
     participant Agent as ADK Agent (Agent Runtime SPIFFE)
     participant EgGW as cbgw-egress-gw (UAP + MA + SGP)
     participant SGP as Semantic Governance Engine
-    participant Gemini as Vertex AI Gemini (:generateContent)
-    participant MCP as Cymbal Banking MCP (Cloud Run)
+    participant Gemini as Vertex AI Gemini
+    participant MCP as Cymbal Banking MCP
 
     Operator->>Portal: Submit chat prompt + selected Agent Role
-    Portal->>IngGW: POST :streamQuery?alt=sse (Inbound Inspection)
+    Portal->>IngGW: POST streamQuery Inbound Inspection
     alt Malicious Inbound Prompt Injection (Scenario 4)
         IngGW-->>Portal: HTTP 403 Model Armor Violation (PERMISSION_DENIED)
         Portal-->>Operator: Render BLOCKED_AT_INGRESS_MODEL_ARMOR
     else Clean Operator Prompt
         Portal->>Agent: Invoke non-streaming ADK Runner (StreamingMode.NONE)
-        Agent->>EgGW: POST :generateContent (with tool declarations)
-        EgGW->>SGP: Evaluate INTENT_ONLY & tool arguments ($500 cap / SUP-APR code)
-        alt Out-of-Policy Refund > $500 Without Code (Scenario 6B)
-            SGP-->>EgGW: DENY (Business Policy Violation + Rationale Log)
+        Agent->>EgGW: POST generateContent with tool declarations
+        EgGW->>SGP: Evaluate INTENT_ONLY and tool args ($500 cap / SUP-APR code)
+        alt Out-of-Policy Refund over $500 Without Code (Scenario 6B)
+            SGP-->>EgGW: DENY Business Policy Violation + Rationale Log
             EgGW-->>Agent: Policy Denial Response
             Agent-->>Portal: Compliance refusal message
             Portal-->>Operator: Render SEMANTIC_GOVERNANCE_DENIED
-        else Compliant Intent & Parameters
-            EgGW->>Gemini: Forward :generateContent
-            Gemini-->>Agent: Return function_call (e.g., get_dispute_details / issue_dispute_refund)
+        else Compliant Intent and Parameters
+            EgGW->>Gemini: Forward generateContent
+            Gemini-->>Agent: Return function_call (get_dispute_details or issue_dispute_refund)
             Agent->>EgGW: JSON-RPC tools/call with SPIFFE Identity + Cloud Run OIDC
-            alt Unregistered Host or Unauthorized SPIFFE Tier (Scenarios 2 & 3)
+            alt Unregistered Host or Unauthorized SPIFFE Tier (Scenarios 2 and 3)
                 EgGW-->>Agent: HTTP 403 (EGRESS_IAP_IAM_UAP or AGENT_REGISTRY_DEFAULT_DENY)
-            else Authorized Target & SPIFFE Tier
+            else Authorized Target and SPIFFE Tier
                 EgGW->>MCP: Forward JSON-RPC tools/call
                 MCP-->>EgGW: Return Firestore payload
-                Note over EgGW: Model Armor + Cloud SDP scans tool response (blocks DSP-1004 indirect PI; logs PII de-identification)
+                Note over EgGW: Model Armor + Cloud SDP scans response (blocks DSP-1004 indirect PI and masks PII)
                 EgGW-->>Agent: Sanitized JSON-RPC result (or HTTP 403 Security Policy Violation)
             end
-            Agent->>EgGW: Final :generateContent synthesis
+            Agent->>EgGW: Final generateContent synthesis
             Agent-->>Portal: Structured reply + tool_trace
             Portal-->>Operator: Render reply, gateway verdict badge, and live Firestore state
         end
