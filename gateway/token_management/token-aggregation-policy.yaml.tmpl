@@ -1,0 +1,64 @@
+# ==============================================================================
+# Purpose: Declarative `TokenAggregationPolicy` (`networksecurity/v1alpha1`)
+#          classifying Cymbal Bank agent-to-LLM inference traffic into logical
+#          token groups (`Burst-Sandbox`, `Treasury-Ops`, `Tier1-Support`,
+#          `Risk-Specialist`, and `Default` catch-all).
+# Architecture/Context: First policy in the strict Token Management dependency
+#          chain (`TokenAggregationPolicy` -> `TokenBudgetPolicy` ->
+#          `CostPerTokenPolicy`). Evaluated in listed order (first match wins)
+#          on the Google-managed `AGENT_TO_ANYWHERE` Egress Agent Gateway.
+# Dependencies/Side Effects: Imported via `gcloud alpha network-security
+#          token-aggregation-policies import` (`from_` matches Cloud SDK export
+#          schema; `jq` normalizes `from_` -> `from` when calling REST directly).
+# Author: Pradeep Singh
+# License: Apache-2.0
+# ==============================================================================
+description: Cymbal Bank Agent Gateway token aggregation rules classifying SPIFFE agent identities and department headers into FinOps token groups.
+labels:
+  managed-by: cymbal-agw-demo
+  governance-pillar: token-management
+target:
+  resources:
+    - "//networkservices.googleapis.com/projects/${PROJECT_NUMBER}/locations/${REGION}/agentGateways/${EGRESS_GATEWAY}"
+rules:
+  # 1. Explicit low-quota sandbox evaluation tag via HTTP header (`X-Token-Group: Burst-Sandbox`).
+  - tokenGroup: "Burst-Sandbox"
+    match:
+      to:
+        destination:
+          headers:
+            - headerField: "X-Token-Group"
+              value: "Burst-Sandbox"
+  # 2. Department-level Treasury Operations attribution tag (`X-Token-Group: Treasury-Ops`).
+  - tokenGroup: "Treasury-Ops"
+    match:
+      to:
+        destination:
+          headers:
+            - headerField: "X-Token-Group"
+              value: "Treasury-Ops"
+  # 3. Cryptographic SPIFFE workload identity for Tier-1 Support Agent calling Vertex AI Gemini.
+  - tokenGroup: "Tier1-Support"
+    match:
+      from_:
+        source:
+          agents:
+            - "${TIER1_PRINCIPAL}"
+      to:
+        destination:
+          modelEndpoints:
+            - modelProviderEndpoint: "aiplatform.googleapis.com"
+  # 4. Cryptographic SPIFFE workload identity for Risk & Disputes Specialist Agent calling Vertex AI Gemini.
+  - tokenGroup: "Risk-Specialist"
+    match:
+      from_:
+        source:
+          agents:
+            - "${SPECIALIST_PRINCIPAL}"
+      to:
+        destination:
+          modelEndpoints:
+            - modelProviderEndpoint: "aiplatform.googleapis.com"
+  # 5. Catch-all fallback rule assigning any unmatched model requests to `Default`.
+  - tokenGroup: "Default"
+    match: {}

@@ -42,6 +42,8 @@ spec:
               value: "${PROJECT_ID}"
             - name: REGION
               value: "${REGION}"
+            - name: PREFIX
+              value: "${PREFIX}"
             - name: STORAGE_BACKEND
               value: "firestore"
             - name: AGENT_INVOCATION_MODE
@@ -50,6 +52,14 @@ spec:
               value: "${TIER1_ENGINE_RESOURCE}"
             - name: SPECIALIST_REASONING_ENGINE
               value: "${SPECIALIST_ENGINE_RESOURCE}"
+            - name: TOKEN_MANAGEMENT_MODE
+              value: "GCP_NETWORK_SECURITY_V1ALPHA1"
+            - name: TM_SANDBOX_MAX_TOKENS
+              value: "6000"
+            - name: TM_SHARED_OPS_MAX_TOKENS
+              value: "50000"
+            - name: TM_SPECIALIST_MAX_TOKENS
+              value: "100000"
           resources:
             requests:
               cpu: "250m"

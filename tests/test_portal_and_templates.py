@@ -70,6 +70,12 @@ async def test_portal_endpoints_and_clean_ui_convention(tmp_path: Path) -> None:
         assert events_resp.status_code == 200
         assert events_resp.json()["count"] >= 1
 
+        tm_resp = await client.get("/api/token-management/overview")
+        assert tm_resp.status_code == 200
+        tm_json = tm_resp.json()
+        assert len(tm_json["pools"]) == 4
+        assert tm_json["total_tokens_consumed"] == 0
+
 
 def test_gateway_json_and_yaml_templates_substitute_cleanly() -> None:
     """
@@ -91,6 +97,7 @@ def test_gateway_json_and_yaml_templates_substitute_cleanly() -> None:
         "PROJECT_ID": "demo-proj",
         "PROJECT_NUMBER": "1234567890",
         "REGION": "us-central1",
+        "MODEL_NAME": "gemini-2.5-flash",
         "CONNECTIVITY_TEMPLATE": "cbgw-conn-tmpl",
         "NETWORK_ATTACHMENT": "cbgw-psc-attachment",
         "SGP_DNS_ZONE_SUFFIX": "sgp.cymbal.internal.",
@@ -118,10 +125,18 @@ def test_gateway_json_and_yaml_templates_substitute_cleanly() -> None:
         "SDP_DEIDENTIFY_TEMPLATE_ID": "cbgw_sdp_deidentify",
         "SDP_MIN_LIKELIHOOD": "LIKELY",
         "MODEL_ARMOR_PI_CONFIDENCE": "LOW_AND_ABOVE",
+        "TM_SANDBOX_MAX_TOKENS": "6000",
+        "TM_SHARED_OPS_MAX_TOKENS": "50000",
+        "TM_SPECIALIST_MAX_TOKENS": "100000",
+        "TM_DEFAULT_MAX_TOKENS": "25000",
+        "TM_INPUT_TOKEN_COST_USD": "0.00000015",
+        "TM_OUTPUT_TOKEN_COST_USD": "0.00000060",
+        "TM_CACHED_TOKEN_COST_USD": "0.0000000375",
+        "TM_PRO_COST_DISCOUNT": "0.20",
     }
 
     tmpl_files = list((REPO_ROOT / "gateway").rglob("*.tmpl"))
-    assert len(tmpl_files) >= 12
+    assert len(tmpl_files) >= 15
 
     placeholder_re = re.compile(r"\$\{[A-Z0-9_]+\}")
     for path in tmpl_files:

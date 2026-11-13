@@ -22,6 +22,7 @@ RUN groupadd --gid 10001 appgroup && \
 
 COPY pyproject.toml README.md ./
 COPY common ./common
+COPY gateway ./gateway
 COPY agents ./agents
 COPY services/__init__.py ./services/__init__.py
 COPY services/cymbal_portal ./services/cymbal_portal
@@ -36,7 +37,8 @@ RUN pip install --no-cache-dir --upgrade pip && \
       "google-genai>=1.5.0" \
       "google-auth>=2.40.0,<=2.60.0" \
       "google-cloud-firestore>=2.19.0,<3.0.0" \
-      "google-cloud-logging>=3.11.0,<4.0.0"
+      "google-cloud-logging>=3.11.0,<4.0.0" \
+      "pyyaml>=6.0.2,<7.0.0"
 
 USER appuser
 

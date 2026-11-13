@@ -114,6 +114,12 @@ def classify_gateway_block(
             f"'{target_description}' (HTTP {http_status}): host is not registered in "
             f"Google Cloud Agent Registry (default-deny perimeter)."
         )
+    elif http_status == 429:
+        layer = "EGRESS_TOKEN_MANAGEMENT_POLICY"
+        reason = (
+            f"Agent Gateway TokenBudgetPolicy rejected '{target_description}' "
+            f"(HTTP 429 Too Many Requests): shared token pool maxTokens quota is exhausted."
+        )
     elif http_status in (401, 403):
         layer = "EGRESS_IAP_IAM_UAP"
         reason = (

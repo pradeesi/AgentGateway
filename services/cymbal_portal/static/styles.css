@@ -336,6 +336,47 @@ body {
   word-break: break-all;
 }
 
+.field-label-spaced {
+  margin-top: 0.65rem;
+}
+
+.quota-bar {
+  margin-top: 0.28rem;
+  width: 100%;
+  min-width: 110px;
+  height: 6px;
+  border-radius: 999px;
+  background: #e2e8f0;
+  overflow: hidden;
+}
+
+.quota-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--blue-600);
+  transition: width 0.25s ease;
+}
+
+.quota-fill-amber {
+  background: #d97706;
+}
+
+.quota-fill-red {
+  background: #dc2626;
+}
+
+.token-turn-strip {
+  margin-top: 0.5rem;
+  padding-top: 0.4rem;
+  border-top: 1px solid #edf2f7;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.4rem;
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+}
+
 .chat-transcript {
   flex: 1;
   overflow-y: auto;

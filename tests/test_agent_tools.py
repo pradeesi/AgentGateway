@@ -119,3 +119,31 @@ def test_mcp_client_gateway_verdicts_and_sdp_masking() -> None:
     rogue_block = client.send_rogue_webhook("audit-drop", "customer dump")
     assert rogue_block["status"] == "blocked_by_agent_gateway"
     assert rogue_block["policy_layer"] == "AGENT_REGISTRY_DEFAULT_DENY"
+
+
+def test_mcp_client_classifies_http_429_token_budget_policy() -> None:
+    """
+    Summary:
+        Verifies `classify_gateway_block` maps HTTP `429 Too Many Requests`
+        rejections to `EGRESS_TOKEN_MANAGEMENT_POLICY`.
+
+    Parameters:
+        None.
+
+    Return Value:
+        None.
+
+    Exceptions/Errors:
+        AssertionError: If HTTP 429 is not attributed to Token Management policy.
+    """
+    from agents.shared_tools.mcp_client import classify_gateway_block
+
+    verdict = classify_gateway_block(
+        http_status=429,
+        response_body="Too Many Requests: TokenPool maxTokens quota exhausted",
+        response_headers={},
+        target_description="aiplatform:generateContent",
+    )
+    assert verdict["status"] == "blocked_by_agent_gateway"
+    assert verdict["http_status"] == 429
+    assert verdict["policy_layer"] == "EGRESS_TOKEN_MANAGEMENT_POLICY"

@@ -29,6 +29,8 @@ source "${ROOT_DIR}/scripts/lib/model_armor.sh"
 source "${ROOT_DIR}/scripts/lib/gateway_sgp.sh"
 # shellcheck source=scripts/lib/agents_runtime.sh
 source "${ROOT_DIR}/scripts/lib/agents_runtime.sh"
+# shellcheck source=scripts/lib/token_management.sh
+source "${ROOT_DIR}/scripts/lib/token_management.sh"
 
 #######################################
 # Summary: Prints CLI usage instructions for `./install.sh`.
@@ -52,8 +54,8 @@ EOF
 }
 
 #######################################
-# Summary: Parses CLI flags, runs all 8 provisioning phases, and prints the
-#          authenticated Cloud Shell proxy launch command.
+# Summary: Parses CLI flags, runs all provisioning phases (including Token
+#          Management policies), and prints the authenticated proxy launch command.
 # Parameters: $@ CLI arguments.
 # Return Value: 0.
 # Exceptions/Errors: Exits non-zero on invalid flags or provisioning errors.
@@ -102,6 +104,7 @@ main() {
   provision_vpc_and_semantic_engine
   provision_gateways_and_registry
   provision_agents_and_policies
+  provision_token_management_policies
   provision_portal_cloudrun
 
   phase_banner "Deployment Complete — Cymbal Bank Agent Gateway Demo"
@@ -111,6 +114,8 @@ main() {
   Ingress Gateway            : ${INGRESS_GATEWAY_RESOURCE}
   Egress Gateway             : ${EGRESS_GATEWAY_RESOURCE}
   IAP Policy Mode            : ${ACTIVE_IAP_MODE}
+  Token Management Mode      : ${ACTIVE_TOKEN_MANAGEMENT_MODE}
+  Token Policies             : ${TOKEN_AGGREGATION_POLICY_ID}, ${TOKEN_BUDGET_POLICY_ID}, ${COST_PER_TOKEN_POLICY_ID}
   Tier-1 Support Engine      : ${TIER1_ENGINE_RESOURCE}
   Risk Specialist Engine     : ${SPECIALIST_ENGINE_RESOURCE}
   Approved Banking MCP URL   : ${MCP_SERVER_URL}/mcp

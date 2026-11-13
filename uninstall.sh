@@ -110,6 +110,15 @@ main() {
   best_effort "IAM UAP Policy ${UAP_POLICY_ID}" \
     api_call DELETE "https://iam.googleapis.com/v3beta/projects/${PROJECT_ID}/locations/global/accessPolicies/${UAP_POLICY_ID}"
 
+  # 3B. Delete Token Management Policies in strict reverse order:
+  #     CostPerTokenPolicy -> TokenBudgetPolicy -> TokenAggregationPolicy.
+  best_effort "CostPerTokenPolicy ${COST_PER_TOKEN_POLICY_ID}" \
+    gc alpha network-security cost-per-token-policies delete "${COST_PER_TOKEN_POLICY_ID}" --location="${REGION}"
+  best_effort "TokenBudgetPolicy ${TOKEN_BUDGET_POLICY_ID}" \
+    gc alpha network-security token-budget-policies delete "${TOKEN_BUDGET_POLICY_ID}" --location="${REGION}"
+  best_effort "TokenAggregationPolicy ${TOKEN_AGGREGATION_POLICY_ID}" \
+    gc alpha network-security token-aggregation-policies delete "${TOKEN_AGGREGATION_POLICY_ID}" --location="${REGION}"
+
   # 4. Delete AuthzPolicies before AuthzExtensions and AgentGateways.
   local pol
   for pol in "${IAP_AUTHZ_POLICY}" "${MA_INGRESS_POLICY}" "${MA_EGRESS_POLICY}" "${SGP_AUTHZ_POLICY}"; do
@@ -176,8 +185,9 @@ main() {
   best_effort "VPC Network ${VPC_NETWORK}" \
     gc compute networks delete "${VPC_NETWORK}"
 
-  rm -f "${STATE_FILE}" "${OUTPUTS_FILE}" \
+  rm -rf "${STATE_FILE}" "${OUTPUTS_FILE}" \
     "${STATE_DIR}/${PROJECT_ID}".*.metadata.json \
+    "${STATE_DIR}/${PROJECT_ID}.token-policies" \
     "${ROOT_DIR}/agents/tier1_support_agent/deployment_metadata.json" \
     "${ROOT_DIR}/agents/risk_specialist_agent/deployment_metadata.json"
 

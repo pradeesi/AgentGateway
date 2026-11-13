@@ -1,0 +1,34 @@
+# ==============================================================================
+# Purpose: Declarative `CostPerTokenPolicy` (`networksecurity/v1alpha1`)
+#          configuring enterprise FinOps USD per-token rate cards (`input`,
+#          `output`, `cached`) and percentage commitment discounts for
+#          `gcp.token_management.token.estimated_cost` telemetry.
+# Architecture/Context: Third policy in the strict Token Management hierarchy
+#          (must be created AFTER `TokenBudgetPolicy` and deleted FIRST during
+#          deprovisioning).
+# Dependencies/Side Effects: Imported via `gcloud alpha network-security
+#          cost-per-token-policies import`.
+# Author: Pradeep Singh
+# License: Apache-2.0
+# ==============================================================================
+description: Cymbal Bank enterprise LLM FinOps rate overrides and negotiated commitment discounts for Cloud Monitoring cost attribution.
+labels:
+  managed-by: cymbal-agw-demo
+  governance-pillar: token-management
+target:
+  resources:
+    - "//networkservices.googleapis.com/projects/${PROJECT_NUMBER}/locations/${REGION}/agentGateways/${EGRESS_GATEWAY}"
+costOverrides:
+  # Negotiated per-token USD contract rates for Gemini 2.5 Flash (input, output, and cached tokens).
+  - model: "${MODEL_NAME}"
+    modelProviderEndpoints:
+      - "aiplatform.googleapis.com"
+    costPerToken:
+      inputTokenCost: ${TM_INPUT_TOKEN_COST_USD}
+      outputTokenCost: ${TM_OUTPUT_TOKEN_COST_USD}
+      cachedTokenCost: ${TM_CACHED_TOKEN_COST_USD}
+  # 20% enterprise commitment discount off default list price for Gemini 2.5 Pro escalations.
+  - model: "gemini-2.5-pro"
+    modelProviderEndpoints:
+      - "aiplatform.googleapis.com"
+    costDiscount: ${TM_PRO_COST_DISCOUNT}

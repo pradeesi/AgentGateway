@@ -83,6 +83,7 @@ ensure_cloudrun_runtime_sa() {
     roles/aiplatform.user \
     roles/logging.viewer \
     roles/logging.logWriter \
+    roles/monitoring.metricWriter \
     roles/cloudtrace.agent \
     "projects/${PROJECT_ID}/roles/${role_id}"; do
     gc projects add-iam-policy-binding "${PROJECT_ID}" \
@@ -174,7 +175,8 @@ provision_backend_cloudrun_services() {
 
 #######################################
 # Summary: Builds and deploys the IAM-protected Cymbal Bank Operations Portal
-#          (`cymbal-portal`) configured with the deployed Reasoning Engine IDs.
+#          (`cymbal-portal`) configured with the deployed Reasoning Engine IDs
+#          and Token Management policy configuration.
 # Parameters: None.
 # Return Value: 0; sets `PORTAL_URL`.
 # Exceptions/Errors: Propagates Cloud Build / Cloud Run errors.
@@ -186,7 +188,7 @@ provision_portal_cloudrun() {
   runtime_sa="$(ensure_cloudrun_runtime_sa)"
   portal_img="$(build_service_image "cymbal-portal" "services/cymbal_portal/Dockerfile")"
 
-  local env_list="PROJECT_ID=${PROJECT_ID},REGION=${REGION},STORAGE_BACKEND=firestore"
+  local env_list="PROJECT_ID=${PROJECT_ID},REGION=${REGION},PREFIX=${PREFIX},MODEL_NAME=${MODEL_NAME},STORAGE_BACKEND=firestore"
   env_list+=",FIRESTORE_DATABASE=${FIRESTORE_DATABASE},FIRESTORE_COLLECTION_PREFIX=${FIRESTORE_COLLECTION_PREFIX}"
   env_list+=",AGENT_INVOCATION_MODE=agent_runtime"
   env_list+=",INGRESS_GATEWAY_NAME=${INGRESS_GATEWAY},EGRESS_GATEWAY_NAME=${EGRESS_GATEWAY}"
@@ -195,6 +197,18 @@ provision_portal_cloudrun() {
   env_list+=",SPECIALIST_REASONING_ENGINE=${SPECIALIST_ENGINE_RESOURCE}"
   env_list+=",TIER1_SPIFFE_ID=${TIER1_PRINCIPAL}"
   env_list+=",SPECIALIST_SPIFFE_ID=${SPECIALIST_PRINCIPAL}"
+  env_list+=",TOKEN_MANAGEMENT_MODE=${ACTIVE_TOKEN_MANAGEMENT_MODE:-HYBRID_GATEWAY_PREVIEW}"
+  env_list+=",TOKEN_AGGREGATION_POLICY_ID=${TOKEN_AGGREGATION_POLICY_ID}"
+  env_list+=",TOKEN_BUDGET_POLICY_ID=${TOKEN_BUDGET_POLICY_ID}"
+  env_list+=",COST_PER_TOKEN_POLICY_ID=${COST_PER_TOKEN_POLICY_ID}"
+  env_list+=",TM_SANDBOX_MAX_TOKENS=${TM_SANDBOX_MAX_TOKENS}"
+  env_list+=",TM_SHARED_OPS_MAX_TOKENS=${TM_SHARED_OPS_MAX_TOKENS}"
+  env_list+=",TM_SPECIALIST_MAX_TOKENS=${TM_SPECIALIST_MAX_TOKENS}"
+  env_list+=",TM_DEFAULT_MAX_TOKENS=${TM_DEFAULT_MAX_TOKENS}"
+  env_list+=",TM_INPUT_TOKEN_COST_USD=${TM_INPUT_TOKEN_COST_USD}"
+  env_list+=",TM_OUTPUT_TOKEN_COST_USD=${TM_OUTPUT_TOKEN_COST_USD}"
+  env_list+=",TM_CACHED_TOKEN_COST_USD=${TM_CACHED_TOKEN_COST_USD}"
+  env_list+=",TM_PRO_COST_DISCOUNT=${TM_PRO_COST_DISCOUNT}"
 
   gc run deploy "${PORTAL_SERVICE_NAME}" \
     --image="${portal_img}" \

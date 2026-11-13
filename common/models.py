@@ -252,10 +252,10 @@ class AuditEvent(BaseModel):
     Parameters:
         timestamp (str): ISO-8601 UTC timestamp.
         layer (str): Enforcement layer (`INGRESS_MA`, `EGRESS_IAP_UAP`, `EGRESS_MA_SDP`,
-            `SEMANTIC_POLICY`, `MCP_LEDGER`).
-        verdict (Literal["ALLOW", "DENY", "MASKED", "INFO"]): Policy decision outcome.
+            `SEMANTIC_POLICY`, `TOKEN_MANAGEMENT`, `MCP_LEDGER`).
+        verdict (Literal["ALLOW", "DENY", "MASKED", "INFO", "WARN"]): Policy decision outcome.
         principal (str): Calling SPIFFE ID, service principal, or operator role.
-        target (str): Target MCP tool, Reasoning Engine, or URL.
+        target (str): Target MCP tool, Reasoning Engine, token pool, or URL.
         summary (str): Human-readable verdict or rationale summary.
 
     Return Value:
@@ -269,7 +269,7 @@ class AuditEvent(BaseModel):
 
     timestamp: str
     layer: str
-    verdict: Literal["ALLOW", "DENY", "MASKED", "INFO"]
+    verdict: Literal["ALLOW", "DENY", "MASKED", "INFO", "WARN"]
     principal: str
     target: str
     summary: str
@@ -293,6 +293,175 @@ class AuditEvent(BaseModel):
         """
         cleaned = value.strip()
         return cleaned[:600] if len(cleaned) > 600 else cleaned
+
+
+class TokenUsageSummary(BaseModel):
+    """
+    Summary:
+        Captures LLM token consumption (`input`, `output`, `cached`, `total`) and
+        estimated USD FinOps cost computed under `CostPerTokenPolicy`.
+
+    Parameters:
+        input_tokens (int): Non-negative prompt/input tokens consumed.
+        output_tokens (int): Non-negative completion/output tokens generated.
+        cached_tokens (int): Non-negative cached context tokens reused.
+        total_tokens (int): Total raw tokens reconciled against pool `maxTokens`.
+        llm_calls (int): Number of underlying model inference turns in the request.
+        model (str): Target foundation model identifier (e.g., `"gemini-2.5-flash"`).
+        estimated_cost_usd (float): Calculated USD cost after `CostPerTokenPolicy` overrides.
+
+    Return Value:
+        Validated `TokenUsageSummary` model instance.
+
+    Exceptions/Errors:
+        pydantic.ValidationError: Raised if token counts or costs are negative.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    input_tokens: int = Field(default=0, ge=0)
+    output_tokens: int = Field(default=0, ge=0)
+    cached_tokens: int = Field(default=0, ge=0)
+    total_tokens: int = Field(default=0, ge=0)
+    llm_calls: int = Field(default=0, ge=0)
+    model: str = Field(default="gemini-2.5-flash", min_length=1, max_length=120)
+    estimated_cost_usd: float = Field(default=0.0, ge=0.0)
+
+
+class TokenPoolStatus(BaseModel):
+    """
+    Summary:
+        Real-time quota, consumption, alert-threshold status, and FinOps spend for a
+        single `TokenPool` defined in `TokenBudgetPolicy`.
+
+    Parameters:
+        pool_id (str): Token pool identifier (e.g., `"cymbal-burst-sandbox-pool"`).
+        token_group_memberships (list[str]): Token groups sharing this pool's quota.
+        max_tokens (int): Maximum raw tokens permitted per reset window.
+        used_tokens (int): Tokens consumed in the active reset window.
+        remaining_tokens (int): Remaining tokens before `max_tokens` is reached.
+        utilization_ratio (float): Ratio `used_tokens / max_tokens` (`0.0`..`N`).
+        reset_period (Literal["DAILY", "HOURLY"]): Quota reset cadence.
+        window_key (str): Active calendar window key (e.g., Pacific date `YYYY-MM-DD`).
+        alert_threshold (float): Warning ratio (`0.0`..`1.0`) triggering alert logs.
+        dry_run (bool): When `True`, logs threshold breaches without HTTP `429` blocks.
+        alert_status (Literal["OK", "STATUS_ALERT_THRESHOLD_REACHED", "STATUS_FULL_THRESHOLD_REACHED"]):
+            Highest threshold state reached in the current reset window.
+        estimated_cost_usd (float): Cumulative USD cost attributed to this pool.
+        blocked_requests (int): Count of pre-flight HTTP `429` rejections in this window.
+        target_models (list[str]): Restricted model names (empty means all models).
+
+    Return Value:
+        Validated `TokenPoolStatus` model instance.
+
+    Exceptions/Errors:
+        pydantic.ValidationError: Raised if numeric bounds or enum values fail validation.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    pool_id: str = Field(..., min_length=1, max_length=80)
+    token_group_memberships: list[str]
+    max_tokens: int = Field(..., gt=0)
+    used_tokens: int = Field(default=0, ge=0)
+    remaining_tokens: int = Field(default=0, ge=0)
+    utilization_ratio: float = Field(default=0.0, ge=0.0)
+    reset_period: Literal["DAILY", "HOURLY"] = "DAILY"
+    window_key: str = Field(..., min_length=4, max_length=32)
+    alert_threshold: float = Field(default=0.8, ge=0.0, le=1.0)
+    dry_run: bool = False
+    alert_status: Literal[
+        "OK",
+        "STATUS_ALERT_THRESHOLD_REACHED",
+        "STATUS_FULL_THRESHOLD_REACHED",
+    ] = "OK"
+    estimated_cost_usd: float = Field(default=0.0, ge=0.0)
+    blocked_requests: int = Field(default=0, ge=0)
+    target_models: list[str] = Field(default_factory=list)
+
+
+class TokenEvaluationReceipt(BaseModel):
+    """
+    Summary:
+        Per-turn decision and reconciliation record returned by the two-phase
+        Token Management evaluator (`Pre-flight budget check` + `Token reconciliation`).
+
+    Parameters:
+        policy_mode (str): Active enforcement plane (`GCP_NETWORK_SECURITY_V1ALPHA1` or
+            `HYBRID_GATEWAY_PREVIEW`).
+        token_group (str): Matched `TokenAggregationPolicy` group (`Tier1-Support`,
+            `Risk-Specialist`, `Treasury-Ops`, `Burst-Sandbox`, `Default`, `unmatched`).
+        pool_id (str): Associated `TokenPool` ID (or `"undefined"` if model-excluded).
+        dry_run (bool): Whether the matched pool operates in audit-only shadow mode.
+        pre_flight_allowed (bool): Whether Phase 1 admitted the LLM call.
+        http_status (int): `200` when admitted or `429` when strict budget is exhausted.
+        alert_triggered (str | None): Newly crossed alert state (`STATUS_ALERT_THRESHOLD_REACHED`
+            or `STATUS_FULL_THRESHOLD_REACHED`) if triggered on this turn.
+        usage (TokenUsageSummary): Reconciled input/output/cached tokens and USD cost.
+        pool_used_tokens (int): Updated pool token usage after reconciliation.
+        pool_max_tokens (int): Configured pool `maxTokens` ceiling (`0` if `undefined`).
+
+    Return Value:
+        Validated `TokenEvaluationReceipt` model instance.
+
+    Exceptions/Errors:
+        pydantic.ValidationError: Raised if fields violate schema constraints.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    policy_mode: str
+    token_group: str
+    pool_id: str
+    dry_run: bool = False
+    pre_flight_allowed: bool = True
+    http_status: int = 200
+    alert_triggered: str | None = None
+    usage: TokenUsageSummary = Field(default_factory=TokenUsageSummary)
+    pool_used_tokens: int = Field(default=0, ge=0)
+    pool_max_tokens: int = Field(default=0, ge=0)
+
+
+class TokenManagementOverview(BaseModel):
+    """
+    Summary:
+        Snapshot of all three Token Management policies (`TokenAggregationPolicy`,
+        `TokenBudgetPolicy`, and `CostPerTokenPolicy`) plus live pool consumption and
+        FinOps cost metrics rendered by the Cymbal Bank Operations Portal.
+
+    Parameters:
+        policy_mode (str): Active enforcement plane identifier.
+        target_gateway (str): Canonical AIP-122 Agent Gateway target URI.
+        aggregation_policy_id (str): Configured `TokenAggregationPolicy` resource ID.
+        budget_policy_id (str): Configured `TokenBudgetPolicy` resource ID.
+        cost_policy_id (str): Configured `CostPerTokenPolicy` resource ID.
+        aggregation_rules (list[dict[str, str]]): Ordered summary of classification rules.
+        pools (list[TokenPoolStatus]): Live state of every configured token pool.
+        cost_overrides (list[dict[str, str]]): Summary of active per-model cost rules.
+        total_tokens_consumed (int): Sum of tokens used across all pools in active windows.
+        total_estimated_cost_usd (float): Sum of estimated USD spend across all pools.
+        total_blocked_requests (int): Sum of HTTP `429` rejections across strict pools.
+
+    Return Value:
+        Validated `TokenManagementOverview` model instance.
+
+    Exceptions/Errors:
+        pydantic.ValidationError: Raised if nested models fail validation.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    policy_mode: str
+    target_gateway: str
+    aggregation_policy_id: str
+    budget_policy_id: str
+    cost_policy_id: str
+    aggregation_rules: list[dict[str, str]]
+    pools: list[TokenPoolStatus]
+    cost_overrides: list[dict[str, str]]
+    total_tokens_consumed: int = Field(default=0, ge=0)
+    total_estimated_cost_usd: float = Field(default=0.0, ge=0.0)
+    total_blocked_requests: int = Field(default=0, ge=0)
 
 
 class LedgerOverview(BaseModel):

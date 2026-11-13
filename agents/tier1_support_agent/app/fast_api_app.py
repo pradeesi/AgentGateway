@@ -133,6 +133,11 @@ def create_agent_http_app() -> FastAPI:
 
         final_texts: list[str] = []
         tool_events: list[dict[str, Any]] = []
+        input_tokens = 0
+        output_tokens = 0
+        cached_tokens = 0
+        total_tokens = 0
+        llm_calls = 0
 
         async for event in runner.run_async(
             user_id=user_id,
@@ -140,6 +145,19 @@ def create_agent_http_app() -> FastAPI:
             new_message=content,
             run_config=run_cfg,
         ):
+            usage_meta = getattr(event, "usage_metadata", None)
+            if usage_meta is not None:
+                p_tok = int(getattr(usage_meta, "prompt_token_count", 0) or 0)
+                c_tok = int(getattr(usage_meta, "candidates_token_count", 0) or 0)
+                cache_tok = int(getattr(usage_meta, "cached_content_token_count", 0) or 0)
+                tot_tok = int(getattr(usage_meta, "total_token_count", 0) or 0)
+                if p_tok > 0 or c_tok > 0 or tot_tok > 0:
+                    input_tokens += p_tok
+                    output_tokens += c_tok
+                    cached_tokens += cache_tok
+                    total_tokens += max(tot_tok, p_tok + c_tok + cache_tok)
+                    llm_calls += 1
+
             ev_content = getattr(event, "content", None)
             parts = getattr(ev_content, "parts", None) or []
             for part in parts:
@@ -166,14 +184,22 @@ def create_agent_http_app() -> FastAPI:
                     final_texts.append(text_val)
 
         reply_text = "\n".join(t.strip() for t in final_texts if t.strip()).strip()
-        return {
-            "output": {
-                "agent": root_agent.name,
-                "session_id": session_id,
-                "reply": reply_text or "Request completed with no textual output.",
-                "tool_trace": tool_events,
-            }
+        output_dict: dict[str, Any] = {
+            "agent": root_agent.name,
+            "session_id": session_id,
+            "reply": reply_text or "Request completed with no textual output.",
+            "tool_trace": tool_events,
         }
+        if llm_calls > 0:
+            output_dict["token_usage"] = {
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "cached_tokens": cached_tokens,
+                "total_tokens": total_tokens,
+                "llm_calls": llm_calls,
+                "model": str(getattr(root_agent, "model", "gemini-2.5-flash")),
+            }
+        return {"output": output_dict}
 
     @api.post("/query")
     async def query_direct(payload: QueryInput) -> dict[str, Any]:

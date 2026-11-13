@@ -3,7 +3,8 @@
   Purpose: Clean institutional banking web console for Cymbal Bank Disputes &
            Treasury Operations, featuring Customer 360 accounts, open disputes,
            transaction ledger, Agent Role switcher (Tier-1 vs. Risk Specialist),
-           and live Google Cloud Agent Gateway governance audit telemetry.
+           LLM Token & FinOps Budget Pool telemetry, and live Google Cloud Agent
+           Gateway governance audit logs.
   Architecture/Context: Served by `services/cymbal_portal/main.py`. Intentionally
            contains zero embedded exploit scripts, attack buttons, or cheat-sheet
            modals—all test and attack prompts live in `README.md`.
@@ -126,9 +127,33 @@
 
       <section class="panel">
         <div class="panel-header">
+          <h2>LLM Token &amp; FinOps Budget Pools</h2>
+          <div class="panel-actions">
+            <span class="panel-caption" id="tm-summary-caption">TokenAggregationPolicy · TokenBudgetPolicy · CostPerTokenPolicy</span>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="data-table" id="token-pools-table">
+            <thead>
+              <tr>
+                <th>Token Pool ID</th>
+                <th>Member Token Groups</th>
+                <th>Mode</th>
+                <th>Consumed / Max Quota</th>
+                <th>Alert Status</th>
+                <th>Est. Cost / 429s</th>
+              </tr>
+            </thead>
+            <tbody id="token-pools-tbody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-header">
           <h2>Agent Gateway &amp; Ledger Audit Stream</h2>
           <div class="panel-actions">
-            <span class="panel-caption">Cloud Logging (Gateway, IAP/UAP, Model Armor, Semantic Policy) + Ledger</span>
+            <span class="panel-caption">Cloud Logging (Gateway, IAP/UAP, Model Armor, Semantic &amp; Token Policies) + Ledger</span>
             <button type="button" class="btn btn-sm" id="refresh-audit-btn">Refresh Telemetry</button>
           </div>
         </div>
@@ -169,6 +194,14 @@
           <span class="tier-chip" id="active-tier-chip">Read-Only MCP Tier</span>
           <code class="spiffe-uri" id="active-spiffe-id">spiffe://...</code>
         </div>
+
+        <label for="token-group-select" class="field-label field-label-spaced">Token Attribution Tag (<code>X-Token-Group</code>)</label>
+        <select id="token-group-select" class="role-select">
+          <option value="">Agent Identity Default (SPIFFE Match)</option>
+          <option value="Treasury-Ops">Treasury-Ops (Shared Operations Pool)</option>
+          <option value="Burst-Sandbox">Burst-Sandbox (6,000 Token Strict Cap)</option>
+          <option value="Default">Default Catch-All (Dry-Run Audit Pool)</option>
+        </select>
       </div>
 
       <div class="chat-transcript" id="chat-transcript" role="log" aria-live="polite">

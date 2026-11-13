@@ -1,0 +1,64 @@
+# ==============================================================================
+# Purpose: Declarative `TokenBudgetPolicy` (`networksecurity/v1alpha1`) defining
+#          shared token pools, `maxTokens` quotas, `DAILY` reset periods,
+#          warning `alertThreshold` levels, and strict HTTP `429` vs `dryRun`
+#          enforcement modes across Cymbal Bank token groups.
+# Architecture/Context: Second policy in the strict Token Management hierarchy
+#          (must be created AFTER `TokenAggregationPolicy` and deleted BEFORE it).
+# Dependencies/Side Effects: Imported via `gcloud alpha network-security
+#          token-budget-policies import`. Emits `token_management_alert_logs`
+#          warnings on threshold crossings and HTTP `429 Too Many Requests` when
+#          strict pools exhaust `maxTokens`.
+# Author: Pradeep Singh
+# License: Apache-2.0
+# ==============================================================================
+description: Cymbal Bank shared LLM token pools enforcing strict HTTP 429 caps and dry-run audit thresholds across SPIFFE agents and operations teams.
+labels:
+  managed-by: cymbal-agw-demo
+  governance-pillar: token-management
+target:
+  resources:
+    - "//networkservices.googleapis.com/projects/${PROJECT_NUMBER}/locations/${REGION}/agentGateways/${EGRESS_GATEWAY}"
+tokenPools:
+  # Tight sandbox cap (default 6,000 tokens) enabling deterministic live HTTP 429
+  # budget-exhaustion testing without impacting production support agent pools.
+  - id: "cymbal-burst-sandbox-pool"
+    tokenGroupMemberships:
+      - "Burst-Sandbox"
+    budget:
+      maxTokens: ${TM_SANDBOX_MAX_TOKENS}
+      resetPeriod: "DAILY"
+      alertThreshold: 0.5
+      dryRun: false
+      models:
+        - model: "${MODEL_NAME}"
+          modelProviderEndpoints:
+            - "aiplatform.googleapis.com"
+  # Shared operations pool spanning both Tier-1 Support SPIFFE identity and Treasury-Ops tag.
+  - id: "cymbal-operations-shared-pool"
+    tokenGroupMemberships:
+      - "Tier1-Support"
+      - "Treasury-Ops"
+    budget:
+      maxTokens: ${TM_SHARED_OPS_MAX_TOKENS}
+      resetPeriod: "DAILY"
+      alertThreshold: 0.8
+      dryRun: false
+  # Dedicated high-capacity pool for privileged Risk & Disputes Specialist investigations.
+  - id: "cymbal-risk-specialist-pool"
+    tokenGroupMemberships:
+      - "Risk-Specialist"
+    budget:
+      maxTokens: ${TM_SPECIALIST_MAX_TOKENS}
+      resetPeriod: "DAILY"
+      alertThreshold: 0.8
+      dryRun: false
+  # Catch-all default pool operating in shadow/audit-only (`dryRun: true`) mode.
+  - id: "cymbal-default-audit-pool"
+    tokenGroupMemberships:
+      - "Default"
+    budget:
+      maxTokens: ${TM_DEFAULT_MAX_TOKENS}
+      resetPeriod: "DAILY"
+      alertThreshold: 0.6
+      dryRun: true

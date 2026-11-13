@@ -21,7 +21,7 @@ import threading
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from common.logging_utils import configure_structured_logging, log_structured
 from common.models import (
@@ -349,6 +349,41 @@ class LedgerStore(abc.ABC):
             None.
         """
 
+    @abc.abstractmethod
+    def get_token_pool_counters(self) -> dict[str, dict[str, Any]]:
+        """
+        Summary:
+            Retrieves persisted token pool usage counters keyed by `pool_id` for
+            `TokenBudgetPolicy` and `CostPerTokenPolicy` evaluation.
+
+        Parameters:
+            None.
+
+        Return Value:
+            dict[str, dict[str, Any]]: Mapping from `pool_id` to counter state.
+
+        Exceptions/Errors:
+            None.
+        """
+
+    @abc.abstractmethod
+    def upsert_token_pool_counter(self, pool_id: str, counter_state: dict[str, Any]) -> None:
+        """
+        Summary:
+            Persists updated token consumption, alert status, and estimated USD cost
+            for `pool_id`.
+
+        Parameters:
+            pool_id (str): Token pool identifier (`cymbal-...-pool`).
+            counter_state (dict[str, Any]): Serializable counter dictionary.
+
+        Return Value:
+            None.
+
+        Exceptions/Errors:
+            LedgerValidationError: If `pool_id` is empty.
+        """
+
 
 def _validate_id(value: str, prefix: str, label: str) -> str:
     """
@@ -416,7 +451,7 @@ class LocalFileLedgerStore(LedgerStore):
         """
         return "local"
 
-    def _read_state(self) -> dict[str, list[dict]]:
+    def _read_state(self) -> dict[str, Any]:
         """
         Summary:
             Reads and parses the JSON ledger state file under re-entrant lock.
@@ -425,8 +460,8 @@ class LocalFileLedgerStore(LedgerStore):
             None.
 
         Return Value:
-            dict[str, list[dict]]: Parsed collections (`accounts`, `transactions`,
-            `disputes`, `events`).
+            dict[str, Any]: Parsed collections (`accounts`, `transactions`,
+            `disputes`, `events`, and `token_pools`).
 
         Exceptions/Errors:
             RuntimeError: Raised if the JSON file is corrupted.
@@ -439,14 +474,14 @@ class LocalFileLedgerStore(LedgerStore):
             except json.JSONDecodeError as exc:
                 raise RuntimeError(f"Corrupted local ledger file {self._path}: {exc}") from exc
 
-    def _write_state(self, data: dict[str, list[dict]]) -> None:
+    def _write_state(self, data: dict[str, Any]) -> None:
         """
         Summary:
             Atomically writes the updated ledger state via a temporary sibling file
             to prevent partial reads during concurrent portal/MCP access.
 
         Parameters:
-            data (dict[str, list[dict]]): Complete state dictionary to persist.
+            data (dict[str, Any]): Complete state dictionary to persist.
 
         Return Value:
             None.
@@ -482,8 +517,8 @@ class LocalFileLedgerStore(LedgerStore):
     def reset_to_seed(self) -> dict[str, int]:
         """
         Summary:
-            Rebuilds the local JSON ledger from `common/seed_data.py` and logs a
-            seed reset audit event.
+            Rebuilds the local JSON ledger from `common/seed_data.py`, clears all
+            `token_pools` quota counters to zero, and logs a seed reset audit event.
 
         Parameters:
             None.
@@ -506,7 +541,7 @@ class LocalFileLedgerStore(LedgerStore):
                 principal="system:seed-reset",
                 target="cymbal_ledger",
                 summary=(
-                    f"Ledger reset to baseline ({len(accounts)} accounts, "
+                    f"Ledger and token budget pools reset to baseline ({len(accounts)} accounts, "
                     f"{len(transactions)} transactions, {len(disputes)} disputes)."
                 ),
             ).model_dump()
@@ -517,6 +552,7 @@ class LocalFileLedgerStore(LedgerStore):
                 "transactions": transactions,
                 "disputes": disputes,
                 "events": events,
+                "token_pools": {},
             }
         )
         log_structured(
@@ -986,6 +1022,56 @@ class LocalFileLedgerStore(LedgerStore):
             ledger_events=events,
         )
 
+    def get_token_pool_counters(self) -> dict[str, dict[str, Any]]:
+        """
+        Summary:
+            Loads persisted token pool quota counters from the local JSON state file.
+
+        Parameters:
+            None.
+
+        Return Value:
+            dict[str, dict[str, Any]]: Mapping from `pool_id` to counter state.
+
+        Exceptions/Errors:
+            None.
+        """
+        state = self._read_state()
+        raw_pools = state.get("token_pools")
+        if not isinstance(raw_pools, dict):
+            return {}
+        return {
+            str(pid): dict(val)
+            for pid, val in raw_pools.items()
+            if isinstance(val, dict)
+        }
+
+    def upsert_token_pool_counter(self, pool_id: str, counter_state: dict[str, Any]) -> None:
+        """
+        Summary:
+            Atomically updates `token_pools[pool_id]` in the local JSON ledger file.
+
+        Parameters:
+            pool_id (str): Token pool identifier (`cymbal-...-pool`).
+            counter_state (dict[str, Any]): Serializable counter dictionary.
+
+        Return Value:
+            None.
+
+        Exceptions/Errors:
+            LedgerValidationError: If `pool_id` is empty.
+        """
+        if not isinstance(pool_id, str) or not pool_id.strip():
+            raise LedgerValidationError("pool_id must be a non-empty string.")
+        with self._lock:
+            state = self._read_state()
+            pools = state.setdefault("token_pools", {})
+            if not isinstance(pools, dict):
+                pools = {}
+                state["token_pools"] = pools
+            pools[pool_id.strip()] = dict(counter_state)
+            self._write_state(state)
+
 
 class FirestoreLedgerStore(LedgerStore):
     """
@@ -1044,6 +1130,7 @@ class FirestoreLedgerStore(LedgerStore):
         self._txns_col = f"{prefix}_transactions"
         self._disputes_col = f"{prefix}_disputes"
         self._events_col = f"{prefix}_events"
+        self._token_pools_col = f"{prefix}_token_pools"
         self.ensure_seeded()
 
     @property
@@ -1085,8 +1172,9 @@ class FirestoreLedgerStore(LedgerStore):
     def reset_to_seed(self) -> dict[str, int]:
         """
         Summary:
-            Purges existing documents in the four prefixed Cymbal collections and
-            writes the deterministic seed dataset in a Firestore batch.
+            Purges existing documents in all Cymbal collections (including shared
+            `token_pools` quota counters) and writes the deterministic seed dataset
+            in a Firestore batch.
 
         Parameters:
             None.
@@ -1102,6 +1190,7 @@ class FirestoreLedgerStore(LedgerStore):
             self._txns_col,
             self._disputes_col,
             self._events_col,
+            self._token_pools_col,
         ):
             docs = list(self._client.collection(col_name).list_documents())
             if docs:
@@ -1580,6 +1669,50 @@ class FirestoreLedgerStore(LedgerStore):
             transactions=transactions,
             disputes=disputes,
             ledger_events=events,
+        )
+
+    def get_token_pool_counters(self) -> dict[str, dict[str, Any]]:
+        """
+        Summary:
+            Streams persisted token pool quota counter documents from Firestore.
+
+        Parameters:
+            None.
+
+        Return Value:
+            dict[str, dict[str, Any]]: Mapping from `pool_id` to counter state.
+
+        Exceptions/Errors:
+            None.
+        """
+        docs = self._client.collection(self._token_pools_col).stream()
+        result: dict[str, dict[str, Any]] = {}
+        for doc in docs:
+            payload = doc.to_dict()
+            if isinstance(payload, dict):
+                result[doc.id] = payload
+        return result
+
+    def upsert_token_pool_counter(self, pool_id: str, counter_state: dict[str, Any]) -> None:
+        """
+        Summary:
+            Writes updated token pool consumption, alert state, and USD cost to
+            Firestore.
+
+        Parameters:
+            pool_id (str): Token pool identifier (`cymbal-...-pool`).
+            counter_state (dict[str, Any]): Serializable counter dictionary.
+
+        Return Value:
+            None.
+
+        Exceptions/Errors:
+            LedgerValidationError: If `pool_id` is empty.
+        """
+        if not isinstance(pool_id, str) or not pool_id.strip():
+            raise LedgerValidationError("pool_id must be a non-empty string.")
+        self._client.collection(self._token_pools_col).document(pool_id.strip()).set(
+            dict(counter_state)
         )
 
 

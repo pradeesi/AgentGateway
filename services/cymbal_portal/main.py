@@ -2,18 +2,21 @@
 Purpose: FastAPI backend for the Cymbal Bank Disputes & Treasury Operations Portal,
          serving the institutional banking UI, live Firestore/local ledger views,
          synchronous Agent Runtime `:query` chat routing (via `CLIENT_TO_AGENT`
-         Ingress Agent Gateway), and live Cloud Logging governance telemetry.
+         Ingress Agent Gateway), two-phase LLM Token Management policy telemetry
+         (`TokenAggregationPolicy`, `TokenBudgetPolicy`, `CostPerTokenPolicy`), and
+         live Cloud Logging governance verdicts.
 Architecture/Context: Deployed as an IAM-protected Cloud Run service (`cymbal-portal`)
          accessed via `./scripts/proxy_portal.sh`. Supports two agent invocation modes:
            - `AGENT_INVOCATION_MODE=agent_runtime`: Calls deployed Vertex AI
              Reasoning Engines (`TIER1_REASONING_ENGINE`, `SPECIALIST_REASONING_ENGINE`)
-             over HTTPS `:query` (governed inbound by `CLIENT_TO_AGENT` Model Armor
-             and outbound by `AGENT_TO_ANYWHERE` IAP/UAP, Model Armor, and Semantic
-             Governance Policy Engine).
+             over HTTPS `:streamQuery` / `:query` (governed inbound by `CLIENT_TO_AGENT`
+             Model Armor and outbound by `AGENT_TO_ANYWHERE` IAP/UAP, Model Armor,
+             Semantic Governance Policy Engine, and Token Management policies).
            - `AGENT_INVOCATION_MODE=local`: Uses ADK `InMemoryRunner` with
              `StreamingMode.NONE` for local smoke testing.
-Dependencies/Side Effects: Reads `common.ledger_store`, `google-auth`, and optional
-         `google-cloud-logging` for real-time gateway audit log retrieval.
+Dependencies/Side Effects: Reads `common.ledger_store`, `common.token_management`,
+         `google-auth`, and optional `google-cloud-logging` for real-time gateway
+         audit log retrieval.
 Author: Pradeep Singh
 License: Apache-2.0
 """
@@ -33,14 +36,15 @@ from typing import Any, Literal
 import google.auth
 import google.auth.transport.requests
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
 from common.ledger_store import LedgerStore, get_ledger_store
 from common.logging_utils import configure_structured_logging, log_structured
-from common.models import AuditEvent
+from common.models import AuditEvent, TokenUsageSummary
+from common.token_management import TokenManagementEngine, estimate_fallback_tokens
 
 logger = configure_structured_logging("cymbal.portal")
 
@@ -55,6 +59,9 @@ class ChatRequest(BaseModel):
     Parameters:
         message (str): Operator prompt sent to the selected ADK agent (1..4000 chars).
         session_id (str | None): Optional conversation session token.
+        token_group (str | None): Optional FinOps attribution tag (`"Burst-Sandbox"`,
+            `"Treasury-Ops"`, or `"Default"`) mapped to `X-Token-Group` for
+            `TokenAggregationPolicy` evaluation.
 
     Return Value:
         Validated `ChatRequest` model.
@@ -67,6 +74,7 @@ class ChatRequest(BaseModel):
 
     message: str = Field(..., min_length=1, max_length=4000)
     session_id: str | None = Field(default=None, max_length=120)
+    token_group: str | None = Field(default=None, max_length=64)
 
 
 def _mask_portal_pii(account_dict: dict[str, Any]) -> dict[str, Any]:
@@ -175,6 +183,7 @@ async def _invoke_remote_reasoning_engine(
     region: str,
     message: str,
     session_id: str,
+    extra_headers: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """
     Summary:
@@ -182,7 +191,8 @@ async def _invoke_remote_reasoning_engine(
         `:streamQuery?alt=sse` (routing inbound through `CLIENT_TO_AGENT` Agent
         Gateway + Model Armor, with automatic fallback to `/api/api/reasoning_engine`),
         while the agent's internal ADK runner uses `StreamingMode.NONE` so outbound
-        Gemini calls hit `:generateContent` for Semantic Governance evaluation.
+        Gemini calls hit `:generateContent` for Semantic Governance and Token
+        Management evaluation.
 
     Parameters:
         engine_resource (str): Full resource name
@@ -190,10 +200,12 @@ async def _invoke_remote_reasoning_engine(
         region (str): GCP region hosting the Reasoning Engine and Agent Gateway.
         message (str): Operator prompt text.
         session_id (str): Conversation session identifier.
+        extra_headers (dict[str, str] | None): Optional attribution headers such as
+            `X-Token-Group` forwarded with the request.
 
     Return Value:
         dict[str, Any]: Normalized response containing `reply`, `tool_trace`,
-        `gateway_verdict`, and `session_id`.
+        `gateway_verdict`, `http_status`, `session_id`, and optional `token_usage`.
 
     Exceptions/Errors:
         RuntimeError: If token acquisition fails.
@@ -207,10 +219,14 @@ async def _invoke_remote_reasoning_engine(
         f"{engine_resource}/api/api/reasoning_engine"
     )
 
-    headers = {
+    headers: dict[str, str] = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
     }
+    for hk, hv in (extra_headers or {}).items():
+        if hk and hv:
+            headers[hk] = hv
+
     stream_body = {
         "class_method": "async_stream_query",
         "input": {
@@ -252,6 +268,18 @@ async def _invoke_remote_reasoning_engine(
                 "http_status": resp.status_code,
                 "session_id": session_id,
             }
+        if resp.status_code == 429 or "too many requests" in lowered:
+            return {
+                "reply": (
+                    "Rejected by Google Cloud Agent Gateway TokenBudgetPolicy "
+                    "(HTTP 429 Too Many Requests): shared token pool quota is exhausted.\n\n"
+                    f"HTTP 429 Gateway Verdict: {raw_err}"
+                ),
+                "tool_trace": [],
+                "gateway_verdict": "TOKEN_BUDGET_EXCEEDED_429",
+                "http_status": 429,
+                "session_id": session_id,
+            }
         if resp.status_code in (400, 403):
             return {
                 "reply": (
@@ -273,6 +301,7 @@ async def _invoke_remote_reasoning_engine(
 
     data = _parse_reasoning_engine_payload(resp.text)
     output = data.get("output", data)
+    raw_token_usage: dict[str, Any] | None = None
     if isinstance(output, dict):
         reply_text = (
             output.get("reply")
@@ -281,6 +310,8 @@ async def _invoke_remote_reasoning_engine(
             or str(output)
         )
         tool_trace = output.get("tool_trace") or []
+        if isinstance(output.get("token_usage"), dict):
+            raw_token_usage = output["token_usage"]
     else:
         reply_text = str(output)
         tool_trace = []
@@ -303,13 +334,16 @@ async def _invoke_remote_reasoning_engine(
     else:
         verdict = "ALLOWED"
 
-    return {
+    result: dict[str, Any] = {
         "reply": str(reply_text),
         "tool_trace": tool_trace,
         "gateway_verdict": verdict,
         "http_status": 200,
         "session_id": session_id,
     }
+    if raw_token_usage is not None:
+        result["token_usage"] = raw_token_usage
+    return result
 
 
 async def _invoke_local_adk_agent(
@@ -320,7 +354,8 @@ async def _invoke_local_adk_agent(
     """
     Summary:
         Executes `tier1_support_agent` or `risk_specialist_agent` in-process via
-        ADK `InMemoryRunner` (`StreamingMode.NONE`) when running locally.
+        ADK `InMemoryRunner` (`StreamingMode.NONE`) when running locally, capturing
+        any `usage_metadata` token counts emitted by Gemini.
 
     Parameters:
         agent_role (Literal["tier1", "specialist"]): Selected agent persona.
@@ -354,6 +389,11 @@ async def _invoke_local_adk_agent(
     )
     final_texts: list[str] = []
     tool_trace: list[dict[str, Any]] = []
+    input_tokens = 0
+    output_tokens = 0
+    cached_tokens = 0
+    total_tokens = 0
+    llm_calls = 0
 
     async for event in runner.run_async(
         user_id="local-operator",
@@ -361,6 +401,19 @@ async def _invoke_local_adk_agent(
         new_message=content,
         run_config=RunConfig(streaming_mode=StreamingMode.NONE),
     ):
+        usage_meta = getattr(event, "usage_metadata", None)
+        if usage_meta is not None:
+            p_tok = int(getattr(usage_meta, "prompt_token_count", 0) or 0)
+            c_tok = int(getattr(usage_meta, "candidates_token_count", 0) or 0)
+            cache_tok = int(getattr(usage_meta, "cached_content_token_count", 0) or 0)
+            tot_tok = int(getattr(usage_meta, "total_token_count", 0) or 0)
+            if p_tok > 0 or c_tok > 0 or tot_tok > 0:
+                input_tokens += p_tok
+                output_tokens += c_tok
+                cached_tokens += cache_tok
+                total_tokens += max(tot_tok, p_tok + c_tok + cache_tok)
+                llm_calls += 1
+
         ev_content = getattr(event, "content", None)
         for part in getattr(ev_content, "parts", None) or []:
             fn_call = getattr(part, "function_call", None)
@@ -385,7 +438,7 @@ async def _invoke_local_adk_agent(
             if txt and getattr(event, "author", "") == target_agent.name:
                 final_texts.append(txt)
 
-    return {
+    response_payload: dict[str, Any] = {
         "reply": "\n".join(t.strip() for t in final_texts if t.strip())
         or "Completed local agent turn.",
         "tool_trace": tool_trace,
@@ -393,6 +446,16 @@ async def _invoke_local_adk_agent(
         "http_status": 200,
         "session_id": session_id,
     }
+    if llm_calls > 0:
+        response_payload["token_usage"] = {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "cached_tokens": cached_tokens,
+            "total_tokens": total_tokens,
+            "llm_calls": llm_calls,
+            "model": str(getattr(target_agent, "model", "gemini-2.5-flash")),
+        }
+    return response_payload
 
 
 def _fetch_cloud_logging_governance_events(project_id: str, limit: int = 35) -> list[AuditEvent]:
@@ -401,6 +464,7 @@ def _fetch_cloud_logging_governance_events(project_id: str, limit: int = 35) -> 
         Queries Google Cloud Logging for recent governance verdicts across:
           - Semantic Governance Policy Engine (`logs/semantic-governance-policy`)
           - Model Armor + Cloud SDP (`logs/modelarmor.googleapis.com%2Fsanitize_operations`)
+          - Token Management Alerts (`logs/token_management_alert_logs`)
           - Agent Gateway + IAP/IAM UAP (`resource.type="networkservices.googleapis.com/Gateway"`)
 
     Parameters:
@@ -426,6 +490,7 @@ def _fetch_cloud_logging_governance_events(project_id: str, limit: int = 35) -> 
             f'timestamp >= "{cutoff}" AND ('
             f'logName="projects/{project_id}/logs/semantic-governance-policy" OR '
             f'logName="projects/{project_id}/logs/modelarmor.googleapis.com%2Fsanitize_operations" OR '
+            f'logName="projects/{project_id}/logs/token_management_alert_logs" OR '
             f'resource.type="networkservices.googleapis.com/Gateway"'
             f")"
         )
@@ -446,7 +511,30 @@ def _fetch_cloud_logging_governance_events(project_id: str, limit: int = 35) -> 
             resource = getattr(entry, "resource", None)
             res_labels = getattr(resource, "labels", {}) or {}
 
-            if "semantic-governance-policy" in log_name:
+            if "token_management_alert_logs" in log_name:
+                alert_status = str(payload.get("status") or "STATUS_ALERT_THRESHOLD_REACHED")
+                bp = payload.get("budget_policy") or {}
+                pool_name = str(bp.get("pool_name") or "token-pool")
+                pol_name = str(bp.get("name") or "token-budget-policy")
+                max_tok = int(bp.get("configured_max_token_count") or 0)
+                used_tok = int(bp.get("used_token_count") or 0)
+                verdict_str: Literal["WARN", "DENY"] = (
+                    "DENY" if alert_status == "STATUS_FULL_THRESHOLD_REACHED" else "WARN"
+                )
+                results.append(
+                    AuditEvent(
+                        timestamp=ts,
+                        layer="TOKEN_MANAGEMENT",
+                        verdict=verdict_str,
+                        principal=pol_name.rsplit("/", 1)[-1],
+                        target=pool_name,
+                        summary=(
+                            f"{alert_status}: Pool '{pool_name}' consumed "
+                            f"{used_tok:,} / {max_tok:,} tokens."
+                        ),
+                    )
+                )
+            elif "semantic-governance-policy" in log_name:
                 # Skip periodic engine pod heartbeat records that carry no evaluation verdict
                 if "verdict" not in payload:
                     continue
@@ -550,11 +638,14 @@ def _fetch_cloud_logging_governance_events(project_id: str, limit: int = 35) -> 
                     for p in policies
                     if isinstance(p, dict) and p.get("name")
                 )
-                layer_name = (
-                    "EGRESS_IAP_UAP"
-                    if "iap-policy" in policy_names
-                    else ("INGRESS_GATEWAY" if "ingress" in gw_name else "AGENT_GATEWAY")
-                )
+                if status_code == 429:
+                    layer_name = "TOKEN_MANAGEMENT"
+                elif "iap-policy" in policy_names:
+                    layer_name = "EGRESS_IAP_UAP"
+                elif "ingress" in gw_name:
+                    layer_name = "INGRESS_GATEWAY"
+                else:
+                    layer_name = "AGENT_GATEWAY"
                 verdict_val: Literal["ALLOW", "DENY"] = "ALLOW" if status_code < 400 else "DENY"
                 policy_suffix = f" via [{policy_names}]" if policy_names else ""
                 results.append(
@@ -583,8 +674,9 @@ def create_portal_app(store_provider: Callable[[], LedgerStore] = get_ledger_sto
     """
     Summary:
         Creates the FastAPI application serving the Cymbal Bank Operations Portal
-        UI (`/`), static assets (`/static`), ledger endpoints, agent chat proxy,
-        and Cloud Logging governance feed.
+        UI (`/`), static assets (`/static`), ledger endpoints, Token Management
+        telemetry (`/api/token-management/overview`), agent chat proxy, and Cloud
+        Logging governance feed.
 
     Parameters:
         store_provider (Callable[[], LedgerStore]): Dependency-injectable ledger
@@ -598,7 +690,7 @@ def create_portal_app(store_provider: Callable[[], LedgerStore] = get_ledger_sto
     """
     portal = FastAPI(
         title="Cymbal Bank Disputes & Treasury Operations Portal",
-        version="1.0.0",
+        version="1.1.0",
         docs_url=None,
         redoc_url=None,
     )
@@ -624,8 +716,9 @@ def create_portal_app(store_provider: Callable[[], LedgerStore] = get_ledger_sto
 
     @portal.get("/api/metadata")
     async def metadata() -> dict[str, Any]:
-        """Returns active environment, gateway resource names, and SPIFFE labels."""
+        """Returns active environment, gateway resource names, Token Management policies, and SPIFFE labels."""
         store = store_provider()
+        tm_engine = TokenManagementEngine(store)
         return {
             "project_id": os.getenv("PROJECT_ID", "local-dev"),
             "region": os.getenv("REGION", "us-central1"),
@@ -634,6 +727,12 @@ def create_portal_app(store_provider: Callable[[], LedgerStore] = get_ledger_sto
             "ingress_gateway": os.getenv("INGRESS_GATEWAY_NAME", "cbgw-ingress-gw"),
             "egress_gateway": os.getenv("EGRESS_GATEWAY_NAME", "cbgw-egress-gw"),
             "iap_policy_mode": os.getenv("IAP_POLICY_MODE", "IAM_UAP_V2"),
+            "token_management": {
+                "policy_mode": tm_engine.policy_mode,
+                "aggregation_policy_id": tm_engine.aggregation_policy_id,
+                "budget_policy_id": tm_engine.budget_policy_id,
+                "cost_policy_id": tm_engine.cost_policy_id,
+            },
             "agents": {
                 "tier1": {
                     "display_name": "Tier-1 Support Agent",
@@ -665,16 +764,23 @@ def create_portal_app(store_provider: Callable[[], LedgerStore] = get_ledger_sto
         raw["accounts"] = [_mask_portal_pii(a) for a in raw["accounts"]]
         return raw
 
+    @portal.get("/api/token-management/overview")
+    async def token_management_overview() -> dict[str, Any]:
+        """Returns active TokenAggregationPolicy, TokenBudgetPolicy pools, and CostPerTokenPolicy FinOps state."""
+        store = store_provider()
+        tm_engine = TokenManagementEngine(store)
+        return tm_engine.get_overview().model_dump()
+
     @portal.post("/api/admin/reset")
     async def admin_reset() -> dict[str, Any]:
-        """Resets Cymbal Bank accounts, transactions, and disputes to seed state."""
+        """Resets Cymbal Bank accounts, transactions, disputes, and token budget pools to baseline."""
         store = store_provider()
         counts = store.reset_to_seed()
         return {"status": "reset_complete", "counts": counts}
 
     @portal.get("/api/governance/events")
     async def governance_events() -> dict[str, Any]:
-        """Combines Cloud Logging Agent Gateway verdicts with ledger audit events."""
+        """Combines Cloud Logging Agent Gateway verdicts with ledger and Token Management audit events."""
         store = store_provider()
         overview = store.get_overview()
         project_id = os.getenv("PROJECT_ID", "")
@@ -689,18 +795,26 @@ def create_portal_app(store_provider: Callable[[], LedgerStore] = get_ledger_sto
     async def chat_with_agent(
         agent_role: Literal["tier1", "specialist"],
         request: ChatRequest,
+        http_request: Request,
+        http_response: Response,
     ) -> dict[str, Any]:
         """
         Summary:
-            Routes an operator chat message to `tier1` or `specialist` via Agent
-            Runtime (through `CLIENT_TO_AGENT` Ingress Gateway) or local ADK Runner.
+            Evaluates Phase 1 (`TokenAggregationPolicy` + `TokenBudgetPolicy` pre-flight
+            quota check), routes admitted prompts to `tier1` or `specialist` via Agent
+            Runtime (through `CLIENT_TO_AGENT` Ingress Gateway) or local ADK Runner,
+            and executes Phase 2 (`usage_metadata` token reconciliation, `alertThreshold`
+            warnings, and `CostPerTokenPolicy` USD attribution).
 
         Parameters:
             agent_role (Literal["tier1", "specialist"]): Selected agent persona.
             request (ChatRequest): Validated operator message body.
+            http_request (Request): Inbound HTTP request (inspected for `X-Token-Group`).
+            http_response (Response): Outbound HTTP response (carries telemetry headers).
 
         Return Value:
-            dict[str, Any]: Reply text, tool execution trace, latency, and verdict.
+            dict[str, Any]: Reply text, tool execution trace, `token_telemetry`,
+            latency, and gateway verdict.
 
         Exceptions/Errors:
             HTTPException: HTTP 500/502 if agent invocation fails unexpectedly.
@@ -709,6 +823,56 @@ def create_portal_app(store_provider: Callable[[], LedgerStore] = get_ledger_sto
         session_id = request.session_id or f"portal-{agent_role}-{uuid.uuid4().hex[:8]}"
         mode = os.getenv("AGENT_INVOCATION_MODE", "local").strip().lower()
         region = os.getenv("REGION", "us-central1").strip()
+
+        store = store_provider()
+        tm_engine = TokenManagementEngine(store)
+
+        agent_spiffe = (
+            os.getenv("TIER1_SPIFFE_ID", "tier1-support-agent").strip()
+            if agent_role == "tier1"
+            else os.getenv("SPECIALIST_SPIFFE_ID", "risk-specialist-agent").strip()
+        ) or (
+            "tier1-support-agent" if agent_role == "tier1" else "risk-specialist-agent"
+        )
+
+        # Honor explicit HTTP header `X-Token-Group` first, then optional JSON `token_group`.
+        header_group = (
+            http_request.headers.get("x-token-group")
+            or request.token_group
+            or ""
+        ).strip()
+        eval_headers: dict[str, str] = {}
+        if header_group:
+            eval_headers["X-Token-Group"] = header_group
+
+        # Phase 1: Pre-flight TokenBudgetPolicy quota check on request path.
+        preflight = tm_engine.check_preflight_budget(
+            agent_id=agent_spiffe,
+            headers=eval_headers,
+        )
+        http_response.headers["X-Token-Group"] = preflight.token_group
+        http_response.headers["X-Token-Pool"] = preflight.pool_id
+
+        if not preflight.pre_flight_allowed:
+            elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
+            http_response.headers["X-Token-Management-Status"] = "429"
+            return {
+                "reply": (
+                    "Rejected by Agent Gateway Token Management Policy "
+                    "(HTTP 429 Too Many Requests).\n\n"
+                    f"Token Group '{preflight.token_group}' mapped to strict pool "
+                    f"'{preflight.pool_id}', which has exhausted its configured budget "
+                    f"({preflight.pool_used_tokens:,} / {preflight.pool_max_tokens:,} tokens). "
+                    "Reset the demo ledger or wait for the next DAILY Pacific Time reset window."
+                ),
+                "tool_trace": [],
+                "gateway_verdict": "TOKEN_BUDGET_EXCEEDED_429",
+                "http_status": 429,
+                "session_id": session_id,
+                "agent_role": agent_role,
+                "latency_ms": elapsed_ms,
+                "token_telemetry": preflight.model_dump(),
+            }
 
         try:
             if mode == "agent_runtime":
@@ -728,6 +892,7 @@ def create_portal_app(store_provider: Callable[[], LedgerStore] = get_ledger_sto
                     region=region,
                     message=request.message.strip(),
                     session_id=session_id,
+                    extra_headers=eval_headers,
                 )
             else:
                 result = await _invoke_local_adk_agent(
@@ -751,9 +916,50 @@ def create_portal_app(store_provider: Callable[[], LedgerStore] = get_ledger_sto
                 detail=f"Failed to invoke '{agent_role}' agent ({mode}): {exc}",
             ) from exc
 
+        # Phase 2: Post-flight token reconciliation & CostPerTokenPolicy attribution.
+        # Note: Requests rejected pre-LLM at Ingress Model Armor (`http_status >= 400`)
+        # never reach Gemini and therefore consume 0 model tokens.
+        raw_usage = result.pop("token_usage", None)
+        if int(result.get("http_status", 200)) >= 400:
+            usage_summary = TokenUsageSummary(
+                input_tokens=0,
+                output_tokens=0,
+                cached_tokens=0,
+                total_tokens=0,
+                llm_calls=0,
+            )
+        elif isinstance(raw_usage, dict):
+            usage_summary = TokenUsageSummary(
+                input_tokens=int(raw_usage.get("input_tokens", 0) or 0),
+                output_tokens=int(raw_usage.get("output_tokens", 0) or 0),
+                cached_tokens=int(raw_usage.get("cached_tokens", 0) or 0),
+                total_tokens=int(raw_usage.get("total_tokens", 0) or 0),
+                llm_calls=int(raw_usage.get("llm_calls", 1) or 1),
+                model=str(
+                    raw_usage.get("model")
+                    or os.getenv("MODEL_NAME", "gemini-2.5-flash")
+                ),
+            )
+        else:
+            usage_summary = estimate_fallback_tokens(
+                prompt_text=request.message,
+                reply_text=str(result.get("reply", "")),
+                tool_events=len(result.get("tool_trace") or []),
+            )
+
+        reconciled = tm_engine.reconcile_postflight_usage(
+            agent_id=agent_spiffe,
+            usage=usage_summary,
+            headers=eval_headers,
+        )
+        http_response.headers["X-Token-Management-Status"] = (
+            reconciled.alert_triggered or "OK"
+        )
+
         elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
         result["agent_role"] = agent_role
         result["latency_ms"] = elapsed_ms
+        result["token_telemetry"] = reconciled.model_dump()
         return result
 
     return portal

@@ -1,9 +1,11 @@
 /* ============================================================================
  * Purpose: Client-side controller for the Cymbal Bank Disputes & Treasury
- *          Operations Portal—renders live ledger tables, manages per-role ADK
- *          chat sessions, and refreshes Agent Gateway Cloud Logging telemetry.
+ *          Operations Portal—renders live ledger tables, shared LLM Token
+ *          Management budget pools, per-role ADK chat sessions, and Agent
+ *          Gateway Cloud Logging telemetry.
  * Architecture/Context: Loaded by `/static/index.html`; communicates strictly
- *          with `/api/metadata`, `/api/ledger/overview`, `/api/governance/events`,
+ *          with `/api/metadata`, `/api/ledger/overview`,
+ *          `/api/token-management/overview`, `/api/governance/events`,
  *          `/api/agents/{role}/chat`, and `/api/admin/reset`.
  * Dependencies/Side Effects: Pure DOM/Fetch ES2022 script; contains zero exploit
  *          helpers or hardcoded credentials.
@@ -33,6 +35,19 @@
   }
 
   /**
+   * Formats fine-grained LLM token USD costs (up to 6 decimal places).
+   * @param {number} value - Token cost in USD.
+   * @returns {string} Formatted sub-cent USD cost string.
+   */
+  function formatTokenCostUsd(value) {
+    const num = Number(value || 0);
+    if (num === 0) {
+      return "$0.0000";
+    }
+    return `$${num.toFixed(num < 0.01 ? 5 : 4)}`;
+  }
+
+  /**
    * Escapes untrusted strings prior to HTML interpolation to prevent DOM XSS.
    * @param {string} raw - Input string.
    * @returns {string} HTML-entity escaped string.
@@ -50,10 +65,21 @@
    */
   function badgeClass(status) {
     const upper = String(status || "").toUpperCase();
-    if (["ACTIVE", "POSTED", "REFUND_ISSUED", "ALLOW", "ALLOWED"].includes(upper)) {
+    if (["ACTIVE", "POSTED", "REFUND_ISSUED", "ALLOW", "ALLOWED", "OK"].includes(upper)) {
       return "badge badge-green";
     }
-    if (["OPEN", "DISPUTED", "HOLD_REVIEW", "MASKED", "INFO"].includes(upper)) {
+    if (
+      [
+        "OPEN",
+        "DISPUTED",
+        "HOLD_REVIEW",
+        "MASKED",
+        "INFO",
+        "WARN",
+        "DRY_RUN",
+        "STATUS_ALERT_THRESHOLD_REACHED",
+      ].includes(upper)
+    ) {
       return "badge badge-amber";
     }
     if (
@@ -61,8 +87,12 @@
         "DENY",
         "HOLD_FRAUD",
         "REJECTED",
+        "BLOCKED_AT_INGRESS_MODEL_ARMOR",
         "BLOCKED_AT_INGRESS_OR_POLICY",
         "EGRESS_POLICY_ENFORCED",
+        "SEMANTIC_GOVERNANCE_DENIED",
+        "TOKEN_BUDGET_EXCEEDED_429",
+        "STATUS_FULL_THRESHOLD_REACHED",
       ].includes(upper)
     ) {
       return "badge badge-red";
@@ -182,6 +212,65 @@
   }
 
   /**
+   * Fetches `/api/token-management/overview` and renders live TokenBudgetPolicy pools & FinOps spend.
+   */
+  async function loadTokenManagement() {
+    const resp = await fetch("/api/token-management/overview");
+    if (!resp.ok) {
+      return;
+    }
+    const tm = await resp.json();
+    const pools = tm.pools || [];
+    const caption = document.getElementById("tm-summary-caption");
+    if (caption) {
+      caption.textContent =
+        `Total Tokens: ${Number(tm.total_tokens_consumed || 0).toLocaleString()} · ` +
+        `Est. Spend: ${formatTokenCostUsd(tm.total_estimated_cost_usd)} · ` +
+        `HTTP 429 Blocks: ${Number(tm.total_blocked_requests || 0)}`;
+    }
+
+    const tbody = document.getElementById("token-pools-tbody");
+    if (!tbody) {
+      return;
+    }
+    tbody.innerHTML = pools
+      .map((p) => {
+        const pct = Math.min(100, Math.round(Number(p.utilization_ratio || 0) * 100));
+        const fillClass =
+          pct >= 100
+            ? "quota-fill quota-fill-red"
+            : pct >= Math.round(Number(p.alert_threshold || 0.8) * 100)
+              ? "quota-fill quota-fill-amber"
+              : "quota-fill";
+        const modeLabel = p.dry_run ? "DRY_RUN" : "STRICT (429)";
+        const modeBadge = p.dry_run ? "badge badge-amber" : "badge badge-blue";
+        const groups = (p.token_group_memberships || []).join(", ");
+        return `
+        <tr>
+          <td>
+            <strong><code>${escapeHtml(p.pool_id)}</code></strong>
+            <div class="panel-caption">${escapeHtml(p.reset_period)} (${escapeHtml(p.window_key)})</div>
+          </td>
+          <td><code>${escapeHtml(groups)}</code></td>
+          <td><span class="${modeBadge}">${escapeHtml(modeLabel)}</span></td>
+          <td>
+            <div><strong>${Number(p.used_tokens || 0).toLocaleString()}</strong> / ${Number(p.max_tokens || 0).toLocaleString()}</div>
+            <div class="quota-bar"><div class="${fillClass}" style="width: ${pct}%"></div></div>
+          </td>
+          <td>
+            <span class="${badgeClass(p.alert_status)}">${escapeHtml(p.alert_status)}</span>
+            <div class="panel-caption">Alert @ ${Math.round(Number(p.alert_threshold || 0) * 100)}%</div>
+          </td>
+          <td>
+            <strong>${formatTokenCostUsd(p.estimated_cost_usd)}</strong>
+            <div class="panel-caption">429s: ${Number(p.blocked_requests || 0)}</div>
+          </td>
+        </tr>`;
+      })
+      .join("");
+  }
+
+  /**
    * Fetches `/api/governance/events` and renders the Cloud Logging + Ledger audit table.
    */
   async function loadGovernanceEvents() {
@@ -212,7 +301,7 @@
   }
 
   /**
-   * Appends a user or agent message bubble (with expandable tool trace) to the chat log.
+   * Appends a user or agent message bubble (with expandable tool & token trace) to the chat log.
    * @param {"user"|"agent"} kind - Message author type.
    * @param {string} text - Main message text.
    * @param {object|null} meta - Optional agent response metadata.
@@ -234,6 +323,17 @@
         : "";
       const latencyHtml = meta?.latency_ms ? `${escapeHtml(meta.latency_ms)} ms` : "";
 
+      let tokenHtml = "";
+      if (meta && meta.token_telemetry) {
+        const tm = meta.token_telemetry;
+        const usage = tm.usage || {};
+        tokenHtml = `
+          <div class="token-turn-strip">
+            <span>Group: <code>${escapeHtml(tm.token_group)}</code> &rarr; Pool: <code>${escapeHtml(tm.pool_id)}</code></span>
+            <span>Tokens: <strong>${Number(usage.total_tokens || 0).toLocaleString()}</strong> (${Number(usage.input_tokens || 0)} in / ${Number(usage.output_tokens || 0)} out) · ${formatTokenCostUsd(usage.estimated_cost_usd)}</span>
+          </div>`;
+      }
+
       let traceHtml = "";
       if (meta && Array.isArray(meta.tool_trace) && meta.tool_trace.length > 0) {
         traceHtml = `
@@ -249,6 +349,7 @@
           <span>${verdictHtml} ${latencyHtml}</span>
         </div>
         <div>${escapeHtml(text)}</div>
+        ${tokenHtml}
         ${traceHtml}
       `;
     }
@@ -258,7 +359,7 @@
   }
 
   /**
-   * Submits an operator prompt to the selected ADK agent and refreshes live ledger/audit views.
+   * Submits an operator prompt to the selected ADK agent and refreshes live ledger/token/audit views.
    * @param {SubmitEvent} event - Form submit event.
    */
   async function handleChatSubmit(event) {
@@ -267,6 +368,8 @@
     const sendBtn = document.getElementById("send-btn");
     const statusText = document.getElementById("chat-status-text");
     const role = document.getElementById("agent-role-select").value;
+    const tokenGroupSelect = document.getElementById("token-group-select");
+    const tokenGroup = tokenGroupSelect ? tokenGroupSelect.value.trim() : "";
     const message = input.value.trim();
     if (!message) {
       return;
@@ -277,13 +380,19 @@
     sendBtn.disabled = true;
     statusText.textContent = "Routing via Agent Gateway...";
 
+    const headers = { "Content-Type": "application/json" };
+    if (tokenGroup) {
+      headers["X-Token-Group"] = tokenGroup;
+    }
+
     try {
       const resp = await fetch(`/api/agents/${encodeURIComponent(role)}/chat`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({
           message,
           session_id: state.sessions[role],
+          token_group: tokenGroup || null,
         }),
       });
       const payload = await resp.json();
@@ -303,19 +412,19 @@
     } finally {
       sendBtn.disabled = false;
       statusText.textContent = "Ready";
-      await Promise.all([loadLedger(), loadGovernanceEvents()]);
+      await Promise.all([loadLedger(), loadTokenManagement(), loadGovernanceEvents()]);
     }
   }
 
   /**
-   * Resets the demo ledger back to baseline seed records.
+   * Resets the demo ledger and shared token budget pools back to baseline seed records.
    */
   async function handleResetLedger() {
     const btn = document.getElementById("reset-ledger-btn");
     btn.disabled = true;
     try {
       await fetch("/api/admin/reset", { method: "POST" });
-      await Promise.all([loadLedger(), loadGovernanceEvents()]);
+      await Promise.all([loadLedger(), loadTokenManagement(), loadGovernanceEvents()]);
     } finally {
       btn.disabled = false;
     }
@@ -326,9 +435,11 @@
     document.getElementById("chat-form").addEventListener("submit", handleChatSubmit);
     document.getElementById("reset-ledger-btn").addEventListener("click", handleResetLedger);
     document.getElementById("refresh-all-btn").addEventListener("click", async () => {
-      await Promise.all([loadLedger(), loadGovernanceEvents()]);
+      await Promise.all([loadLedger(), loadTokenManagement(), loadGovernanceEvents()]);
     });
-    document.getElementById("refresh-audit-btn").addEventListener("click", loadGovernanceEvents);
+    document.getElementById("refresh-audit-btn").addEventListener("click", async () => {
+      await Promise.all([loadTokenManagement(), loadGovernanceEvents()]);
+    });
     document.getElementById("clear-chat-btn").addEventListener("click", () => {
       const role = document.getElementById("agent-role-select").value;
       state.sessions[role] = `portal-${role}-${Math.random().toString(36).slice(2, 9)}`;
@@ -338,6 +449,11 @@
         </div>`;
     });
 
-    await Promise.all([loadMetadata(), loadLedger(), loadGovernanceEvents()]);
+    await Promise.all([
+      loadMetadata(),
+      loadLedger(),
+      loadTokenManagement(),
+      loadGovernanceEvents(),
+    ]);
   });
 })();
