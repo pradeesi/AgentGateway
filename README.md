@@ -119,7 +119,7 @@ sequenceDiagram
     alt Strict Token Pool Exhausted (Scenario 7)
         EgGW-->>Portal: HTTP 429 Too Many Requests (TokenBudgetPolicy)
         Portal-->>Operator: Render TOKEN_BUDGET_EXCEEDED_429
-    else Pool Quota Available (or dryRun: true)
+    else Pool Quota Available (or dryRun true)
         Portal->>IngGW: POST streamQuery Inbound Inspection
         alt Malicious Inbound Prompt Injection (Scenario 4)
             IngGW-->>Portal: HTTP 403 Model Armor Violation (0 LLM tokens charged)
